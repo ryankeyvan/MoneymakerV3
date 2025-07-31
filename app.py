@@ -1,34 +1,67 @@
-# app.py
-
 import streamlit as st
-from scanner import scan_stocks
 import pandas as pd
-import time
+import joblib
+from alpha_vantage.timeseries import TimeSeries
+from utils.preprocessing import preprocess_single_stock
+import matplotlib.pyplot as plt
+import os
 
-st.set_page_config(page_title="📈 Money Maker AI", layout="wide", page_icon="💰")
+# === CONFIG ===
+API_KEY = "JMOVPJWW0ZA4ASVW"
+MODEL_PATH = "models/breakout_model.pkl"
+TICKERS = ["AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META", "NFLX", "ORCL", "BABA", "DIS", "BAC", "NKE", "CRM"]
+CONFIDENCE_THRESHOLD = 0.60
 
-st.title("💰 Money Maker AI Stock Breakout Scanner")
-st.markdown("Scan live stock data and predict breakouts using AI.")
+ts = TimeSeries(key=API_KEY, output_format='pandas')
 
-with st.sidebar:
-    st.header("⚙️ Settings")
-    default_watchlist = ["AAPL", "MSFT", "GOOGL", "NVDA", "AMZN", "TSLA", "META", "AMD", "NFLX", "INTC"]
-    tickers = st.text_area("Enter Tickers (comma separated)", value=", ".join(default_watchlist)).split(",")
-    tickers = [x.strip().upper() for x in tickers if x.strip()]
-    run_scan = st.button("🔍 Run Scan")
+# === Load Model ===
+model = joblib.load(MODEL_PATH)
 
-if run_scan:
-    with st.spinner("📡 Scanning..."):
-        df, logs = scan_stocks(tickers)
-        st.success("✅ Scan complete!")
+st.set_page_config(page_title="MoneyMakerV3", layout="wide")
+st.title("📈 MoneyMakerV3 — Breakout Stock Scanner")
+st.markdown("Scans top tickers and ranks breakout candidates using AI.")
 
-        if not df.empty:
-            st.subheader("📊 Scan Results")
-            st.dataframe(df)
+if st.button("🚀 Scan Now"):
+    results = []
 
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Download CSV", data=csv, file_name="scan_results.csv", mime="text/csv")
+    with st.spinner("Scanning for breakouts..."):
+        for ticker in TICKERS:
+            try:
+                data, _ = ts.get_daily(symbol=ticker, outputsize='compact')
+                data.rename(columns={
+                    '1. open': 'Open',
+                    '2. high': 'High',
+                    '3. low': 'Low',
+                    '4. close': 'Close',
+                    '5. volume': 'Volume'
+                }, inplace=True)
+                data = data.sort_index()
+                df = data[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
-        st.subheader("📜 Scan Logs")
-        for log in logs:
-            st.write(log)
+                if df.empty or len(df) < 50:
+                    continue
+
+                X_scaled, df_processed = preprocess_single_stock(df)
+                if len(X_scaled) == 0:
+                    continue
+
+                prob = model.predict_proba(X_scaled)[-1][1]  # Most recent
+                if prob >= CONFIDENCE_THRESHOLD:
+                    results.append({
+                        "Ticker": ticker,
+                        "Breakout Score": round(prob, 4),
+                        "Last Close": round(df_processed["Close"].iloc[-1], 2)
+                    })
+
+            except Exception as e:
+                st.error(f"{ticker} error: {e}")
+
+    if results:
+        df_out = pd.DataFrame(results).sort_values(by="Breakout Score", ascending=False)
+        st.success(f"✅ {len(df_out)} breakout candidates found.")
+        st.dataframe(df_out)
+
+        csv = df_out.to_csv(index=False).encode()
+        st.download_button("📥 Download Watchlist (CSV)", csv, file_name="watchlist.csv")
+    else:
+        st.warning("❌ No breakouts found today.")
