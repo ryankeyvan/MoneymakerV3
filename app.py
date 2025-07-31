@@ -1,14 +1,37 @@
 import streamlit as st
 from scanner import scan_stocks
 
+# Page config
 st.set_page_config(page_title="Money Maker", layout="centered")
 
+# 📘 Sidebar: Metric Key / Legend
+with st.sidebar:
+    st.title("📖 Legend / Metric Key")
+    st.markdown("""
+    **📈 RSI (Relative Strength Index):**
+    - `> 70` → Overbought  
+    - `< 30` → Oversold  
+    - `50–65` → Healthy uptrend  
+
+    **⚡ Momentum (Price Trend):**
+    - `> 1.05` → Strong upward momentum  
+    - `< 1.00` → Weak or declining  
+
+    **📊 Volume Ratio:**
+    - `> 1.5` → High interest (potential breakout)  
+    - `≈ 1.0` → Normal volume  
+    - `< 0.8` → Low volume  
+    """)
+
+    st.markdown("---")
+    st.info("✅ A '🔥 Buy Signal' means the model scored the stock **≥ 0.7** for breakout potential.")
+
+# 💸 Title & input
 st.title("💸 Money Maker – AI Stock Breakout Assistant")
 st.markdown("Enter a list of stock tickers separated by commas (e.g. `AAPL, MSFT, TSLA`)")
 
 tickers_input = st.text_input("Ticker Symbols", value="AAPL, MSFT, TSLA, PLTR, NVDA")
 
-# ✅ Only define and use results when button is clicked
 if st.button("🚀 Run Breakout Scan"):
     tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
     
