@@ -22,37 +22,30 @@ def get_all_stocks_above_5_dollars():
 
 def scan_stocks(tickers=None, auto=False):
     results = []
-
-    if auto or tickers is None:
-        tickers = get_all_stocks_above_5_dollars()
+    tickers = tickers or get_all_stocks_above_5_dollars()
 
     for ticker in tickers:
         try:
-            time.sleep(0.5)
-            print(f"📡 Scanning {ticker}")
+            time.sleep(0.3)
             data = yf.download(ticker, period="3mo", interval="1d", progress=False)
             if data.empty or len(data) < 14:
-                print(f"⚠️ Skipping {ticker}: not enough data")
                 continue
 
             recent_data = data.tail(14)
             rsi = RSIIndicator(close=recent_data["Close"]).rsi().iloc[-1]
             momentum = recent_data["Close"].iloc[-1] / recent_data["Close"].iloc[0] - 1
+            volume_ratio = recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean()
             volume_change = (recent_data["Volume"].iloc[-1] - recent_data["Volume"].mean()) / recent_data["Volume"].mean() * 100
             current_price = recent_data["Close"].iloc[-1]
 
-            sentiment_score = get_sentiment_score(ticker)
-            breakout_score = predict_breakout(
-                volume_ratio=recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean(),
-                price_momentum=momentum + 1,
-                rsi=rsi
-            )
+            try:
+                sentiment_score = get_sentiment_score(ticker)
+            except:
+                sentiment_score = 0.5  # fallback if Yahoo fails
 
-            if np.isnan(breakout_score):
-                print(f"⚠️ {ticker} returned invalid breakout score")
-                continue
+            breakout_score = predict_breakout(volume_ratio, momentum + 1, rsi)
 
-            result = {
+            results.append({
                 "Ticker": ticker,
                 "Current Price": round(current_price, 2),
                 "Breakout Score": round(breakout_score, 3),
@@ -61,15 +54,11 @@ def scan_stocks(tickers=None, auto=False):
                 "RSI": round(rsi, 2),
                 "Momentum": round(momentum * 100, 2),
                 "Volume Change": round(volume_change, 2),
-                "Sentiment Score": sentiment_score
-            }
-
-            print(f"✅ Added {ticker}: {result}")
-            results.append(result)
+                "Sentiment Score": round(sentiment_score, 2)
+            })
 
         except Exception as e:
-            print(f"❌ Error scanning {ticker}: {e}")
+            print(f"⚠️ Failed on {ticker}: {e}")
             continue
 
-    print("🔎 TOTAL STOCKS FOUND:", len(results))
     return results
