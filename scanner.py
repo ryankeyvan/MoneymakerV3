@@ -1,56 +1,85 @@
-# scanner.py
-
-import yfinance as yf
 import pandas as pd
-import numpy as np
-from ta.momentum import RSIIndicator
-from ml_model import predict_breakout
+import joblib
+from alpha_vantage.timeseries import TimeSeries
+from utils.preprocessing import preprocess_single_stock
+from sklearn.exceptions import NotFittedError
+import os
 
-def get_volume_ratio(df):
-    return df["Volume"].iloc[-1] / df["Volume"].rolling(20).mean().iloc[-1]
+# === CONFIG ===
+API_KEY = "JMOVPJWW0ZA4ASVW"
+MODEL_PATH = "models/breakout_model.pkl"
+TICKERS = ["AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META", "NFLX", "ORCL", "BABA", "DIS", "BAC", "NKE", "CRM"]
+CONFIDENCE_THRESHOLD = 0.60
 
-def get_momentum(df):
-    return df["Close"].iloc[-1] / df["Close"].iloc[-2]
+# === Alpha Vantage Setup ===
+ts = TimeSeries(key=API_KEY, output_format='pandas')
 
-def get_rsi(df):
-    return RSIIndicator(close=df["Close"]).rsi().iloc[-1]
+def fetch_data(ticker):
+    try:
+        data, _ = ts.get_daily(symbol=ticker, outputsize='compact')
+        data.rename(columns={
+            '1. open': 'Open',
+            '2. high': 'High',
+            '3. low': 'Low',
+            '4. close': 'Close',
+            '5. volume': 'Volume'
+        }, inplace=True)
+        data = data.sort_index()
+        return data[["Open", "High", "Low", "Close", "Volume"]].dropna()
+    except Exception as e:
+        print(f"❌ Failed to fetch {ticker}: {e}")
+        return pd.DataFrame()
 
-def scan_stocks(tickers):
-    results = []
-    logs = []
+# === Load ML model ===
+if not os.path.exists(MODEL_PATH):
+    raise FileNotFoundError("❌ Model not found. Train it with train_model.py first.")
 
-    for ticker in tickers:
-        try:
-            df = yf.download(ticker, period="30d", interval="1d", progress=False)
-            if df.shape[0] < 20:
-                logs.append(f"⚠️ {ticker} skipped: Not enough data")
-                continue
+model = joblib.load(MODEL_PATH)
 
-            volume_ratio = get_volume_ratio(df)
-            momentum = get_momentum(df)
-            rsi = get_rsi(df)
+# === Scan Loop ===
+results = []
 
-            score = predict_breakout(volume_ratio, momentum, rsi)
+print("📊 Scanning stocks...\n")
 
-            signal = "🧐 Watch"
-            if isinstance(score, float):
-                if score > 0.8:
-                    signal = "🚀 Strong Buy"
-                elif score > 0.6:
-                    signal = "🟢 Buy"
-                elif score < 0.3:
-                    signal = "🔴 Avoid"
+for ticker in TICKERS:
+    print(f"🔎 Scanning {ticker}...")
 
-            results.append({
+    df = fetch_data(ticker)
+
+    if df.empty or len(df) < 50:
+        print(f"⚠️ Skipping {ticker}: Not enough data.")
+        continue
+
+    try:
+        X_scaled, df_processed = preprocess_single_stock(df)
+        if len(X_scaled) == 0:
+            print(f"⚠️ Skipping {ticker}: No valid features.")
+            continue
+
+        probs = model.predict_proba(X_scaled)
+        breakout_score = probs[-1][1]  # Latest day
+
+        if breakout_score >= CONFIDENCE_THRESHOLD:
+            last_close = df_processed["Close"].iloc[-1]
+            result = {
                 "Ticker": ticker,
-                "Breakout Score": score,
-                "Volume Ratio": round(volume_ratio, 2),
-                "Price Momentum": round(momentum, 2),
-                "RSI": round(rsi, 2),
-                "Signal": signal
-            })
+                "Breakout Score": round(breakout_score, 4),
+                "Last Close": round(last_close, 2)
+            }
+            results.append(result)
 
-        except Exception as e:
-            logs.append(f"❌ {ticker} error: {str(e)}")
+            print(f"✅ {ticker}: Score {breakout_score:.2f}")
 
-    return pd.DataFrame(results), logs
+    except NotFittedError:
+        print("❌ Model is not trained yet.")
+    except Exception as e:
+        print(f"❌ Error with {ticker}: {e}")
+
+# === Output Results ===
+if results:
+    df_out = pd.DataFrame(results).sort_values(by="Breakout Score", ascending=False)
+    df_out.to_csv("watchlist.csv", index=False)
+    print("\n✅ Watchlist saved to watchlist.csv:")
+    print(df_out)
+else:
+    print("\n❌ No breakouts detected today.")
