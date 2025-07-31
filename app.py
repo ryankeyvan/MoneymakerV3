@@ -21,7 +21,7 @@ model = joblib.load(MODEL_PATH)
 # === Streamlit Setup ===
 st.set_page_config(page_title="MoneyMakerV3", layout="wide")
 st.title("📈 MoneyMakerV3 — Breakout Stock Scanner")
-st.markdown("Scans tickers and ranks breakout candidates using your trained model.")
+st.markdown("Scans tickers and ranks breakout candidates using your trained AI model.")
 
 if st.button("🚀 Scan Now"):
     results = []
@@ -46,10 +46,11 @@ if st.button("🚀 Scan Now"):
                     prob = float(probs[-1])
 
                 if prob >= CONFIDENCE_THRESHOLD:
+                    last_close = df_processed["Close"].values[-1]
                     results.append({
                         "Ticker": ticker,
                         "Breakout Score": round(prob, 4),
-                        "Last Close": round(df_processed["Close"].iloc[-1], 2)
+                        "Last Close": round(float(last_close), 2)
                     })
 
             except Exception as e:
@@ -65,4 +66,3 @@ if st.button("🚀 Scan Now"):
         st.download_button("📥 Download Watchlist (CSV)", csv, file_name="watchlist.csv")
     else:
         st.warning("❌ No breakouts found today.")
-
