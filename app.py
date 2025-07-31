@@ -1,78 +1,60 @@
 import streamlit as st
-import pandas as pd
 from scanner import scan_stocks, get_all_stocks_above_5_dollars
 
-st.set_page_config(page_title="Money Maker AI", layout="wide")
-st.title("💸 Money Maker: AI Stock Breakout Assistant")
+st.set_page_config(page_title="📈 Money Maker AI", layout="wide")
 
-# Sidebar input
-st.sidebar.header("🔧 Options")
-input_tickers = st.sidebar.text_input("Enter ticker symbols (comma-separated)", "")
-auto_scan = st.sidebar.checkbox("Auto-scan 100+ popular stocks over $5", value=False)
+st.title("💸 Money Maker AI - Breakout Stock Scanner")
 
-# Session state
-if "results" not in st.session_state:
-    st.session_state["results"] = []
+# Sidebar inputs
+st.sidebar.header("📊 Scanner Options")
+mode = st.sidebar.radio("Select Scan Mode", ["Enter Tickers", "Auto Scan 100+"])
 
-# Indicator key
+if mode == "Enter Tickers":
+    tickers_input = st.sidebar.text_area("Enter Tickers (comma separated)", "AAPL, TSLA, NVDA, MSFT")
+    tickers = [x.strip().upper() for x in tickers_input.split(",") if x.strip()]
+else:
+    tickers = get_all_stocks_above_5_dollars()
+
+scan_button = st.sidebar.button("🚀 Run Scan")
+
+# Display key/legend
 with st.expander("📘 Indicator Key"):
     st.markdown("""
-- **Breakout Score**: AI confidence (0–1) of breakout potential  
-- **RSI**: Relative Strength Index; >70 = overbought, <30 = oversold  
-- **Momentum**: % price change over 14 days  
-- **Volume Change**: % above 14-day volume avg  
-- **Sentiment Score**: News & social buzz score  
-- **Target Price**: Projected +15%  
-- **Stop Loss**: Suggested -7% downside buffer
-""")
+    - **Breakout Score**: Confidence (0–1) of breakout potential. ≥ 0.7 is a strong signal.
+    - **RSI (Relative Strength Index)**: Measures overbought/oversold (30–70 ideal range).
+    - **Momentum**: Price gain (%) over last 14 days.
+    - **Volume Change**: Spike vs. 2-week average (%).
+    - **Signal**: 🔥 = Strong Buy, 🧐 = Watch.
+    """)
 
-# Scan buttons
-run_scan = st.button("🚀 Run Scan")
-test_scan = st.button("🧪 Test on AAPL")
-log_area = st.container()
+progress = st.empty()
+log_area = st.empty()
+output_area = st.empty()
 
-# Run scan
-if run_scan:
-    if auto_scan:
-        tickers = get_all_stocks_above_5_dollars()
-        st.info(f"🔍 Auto-scanning {len(tickers)} stocks...")
-    elif input_tickers:
-        tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
-        st.info(f"🔍 Scanning: {', '.join(tickers)}")
-    else:
-        st.warning("⚠️ Enter tickers or enable auto-scan.")
-        st.stop()
+if scan_button:
+    st.session_state["results"] = []
+    st.session_state["logs"] = []
 
-    progress = st.progress(0.0, text="⏳ Starting scan...")
+    progress_bar = progress.progress(0, text="🔎 Starting scan...")
+
     results, logs = scan_stocks(
         tickers=tickers,
-        update_progress=lambda p: progress.progress(p, text=f"🔎 Scanning... {int(p * 100)}%")
+        update_progress=lambda p: progress_bar.progress(p, text=f"🔍 Scanning... {int(p * 100)}%"),
     )
-    st.session_state["results"] = results
-    progress.empty()
 
-    # Log outputs
-    for log in logs:
-        log_area.write(log)
-
-if test_scan:
-    st.info("🧪 Scanning AAPL...")
-    results, logs = scan_stocks(tickers=["AAPL"])
-    st.session_state["results"] = results
-    for log in logs:
-        log_area.write(log)
-
-# Display results
-results = st.session_state["results"]
-if results:
-    df = pd.DataFrame(results)
-    if "Breakout Score" in df.columns:
+    if not results:
+        output_area.warning("⚠️ No valid breakout scores found. Some tickers may have failed to fetch data.")
+    else:
+        df = st.session_state["results"] = results
         df = df.sort_values(by="Breakout Score", ascending=False)
+        output_area.dataframe(df)
 
-    st.success(f"✅ Showing {len(df)} results")
-    st.dataframe(df, use_container_width=True)
+    if logs:
+        st.session_state["logs"] = logs
+        with st.expander("📝 Scan Logs"):
+            for log in logs:
+                st.write(log)
 
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("📥 Download CSV", data=csv, file_name="breakout_results.csv", mime="text/csv")
-else:
-    st.warning("⚠️ No results found or scan hasn’t been run yet.")
+# Default message
+if "results" not in st.session_state:
+    st.info("⚠️ No results found or scan hasn’t been run yet.")
