@@ -2,13 +2,15 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import joblib
-import matplotlib.pyplot as plt
 from utils.preprocessing import preprocess_single_stock
 import os
 
 # === CONFIG ===
 MODEL_PATH = "models/breakout_model.pkl"
-TICKERS = ["AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META", "NFLX", "ORCL", "BABA", "DIS", "BAC", "NKE", "CRM"]
+TICKERS = [
+    "AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META",
+    "NFLX", "ORCL", "BABA", "DIS", "BAC", "NKE", "CRM"
+]
 CONFIDENCE_THRESHOLD = 0.60
 
 # === Load Model ===
@@ -18,7 +20,7 @@ if not os.path.exists(MODEL_PATH):
 
 model = joblib.load(MODEL_PATH)
 
-# === Streamlit Setup ===
+# === Streamlit UI ===
 st.set_page_config(page_title="MoneyMakerV3", layout="wide")
 st.title("📈 MoneyMakerV3 — Breakout Stock Scanner")
 st.markdown("Scans tickers and ranks breakout candidates using your trained AI model.")
@@ -46,17 +48,18 @@ if st.button("🚀 Scan Now"):
                     prob = float(probs[-1])
 
                 if prob >= CONFIDENCE_THRESHOLD:
-                    last_close = df_processed["Close"].values[-1]
+                    last_close_val = df_processed["Close"].values.flatten()[-1]
+                    last_close = float(last_close_val)
+
                     results.append({
                         "Ticker": ticker,
                         "Breakout Score": round(prob, 4),
-                        "Last Close": round(float(last_close), 2)
+                        "Last Close": round(last_close, 2)
                     })
 
             except Exception as e:
                 st.error(f"{ticker} error: {e}")
 
-    # === Output Results ===
     if results:
         df_out = pd.DataFrame(results).sort_values(by="Breakout Score", ascending=False)
         st.success(f"✅ {len(df_out)} breakout candidates found.")
