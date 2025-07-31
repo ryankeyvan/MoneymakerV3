@@ -4,70 +4,72 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 import joblib
 import os
 
-TICKERS = ["AAPL", "NVDA", "AMD", "MSFT", "TSLA", "GOOGL"]
+# Setup
+TICKERS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"]
 START_DATE = "2020-01-01"
 END_DATE = "2024-12-31"
-BREAKOUT_THRESHOLD = 0.1
+BREAKOUT_THRESHOLD = 0.05
+LOOKAHEAD_DAYS = 5
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-def label_breakouts(df, threshold=BREAKOUT_THRESHOLD, window=5):
-    df["future_max"] = df["Close"].rolling(window=window, min_periods=1).max().shift(-window)
+def label_breakouts(df, threshold=BREAKOUT_THRESHOLD, lookahead=LOOKAHEAD_DAYS):
+    df = df.copy()
+    df["future_max"] = df["Close"].shift(-lookahead).rolling(lookahead).max()
+    df.dropna(subset=["future_max", "Close"], inplace=True)
     df["label"] = (df["future_max"] > df["Close"] * (1 + threshold)).astype(int)
-    df.dropna(inplace=True)
     return df
 
-def extract_features(df):
-    df["volume_ratio"] = df["Volume"] / df["Volume"].rolling(5).mean()
-    df["momentum"] = df["Close"] / df["Close"].shift(5)
-    df["rsi"] = compute_rsi(df["Close"], 14)
-    return df[["volume_ratio", "momentum", "rsi", "label"]].dropna()
+def compute_features(df):
+    df = df.copy()
+    df["Volume_Ratio"] = df["Volume"] / df["Volume"].rolling(5).mean()
+    df["Price_Momentum"] = df["Close"] / df["Close"].shift(5)
+    df["RSI"] = 100 - (100 / (1 + df["Close"].pct_change().rolling(14).mean() /
+                              df["Close"].pct_change().rolling(14).std()))
+    df = df[["Volume_Ratio", "Price_Momentum", "RSI", "label"]].dropna()
+    return df
 
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
+# Aggregate data
 all_data = []
-
 for ticker in TICKERS:
     print(f"Fetching {ticker}...")
     df = yf.download(ticker, start=START_DATE, end=END_DATE)
-    if df.empty or "Close" not in df.columns:
-        print(f"Skipping {ticker}, no data.")
+    if df.empty:
+        print(f"⚠️ Skipping {ticker} due to empty data.")
         continue
-    df = label_breakouts(df)
-    features = extract_features(df)
-    features["ticker"] = ticker
-    all_data.append(features)
+    try:
+        df = label_breakouts(df)
+        features = compute_features(df)
+        all_data.append(features)
+    except Exception as e:
+        print(f"❌ Error with {ticker}: {e}")
 
+# Combine and train
 if not all_data:
-    raise ValueError("No data collected for training.")
-
-full_data = pd.concat(all_data)
-
-X = full_data[["volume_ratio", "momentum", "rsi"]]
-y = full_data["label"]
+    raise RuntimeError("No data was successfully processed.")
+df_all = pd.concat(all_data)
+X = df_all.drop(columns=["label"])
+y = df_all["label"]
 
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
 model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X_scaled, y)
+model.fit(X_train, y_train)
 
-print("✅ Training complete.\n")
-print(classification_report(y, model.predict(X_scaled)))
+y_pred = model.predict(X_test)
+print("\n📊 Classification Report:")
+print(classification_report(y_test, y_pred))
 
+# Save model and scaler
 joblib.dump(model, os.path.join(MODEL_DIR, "breakout_model.pkl"))
 joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
-print("✅ Model and scaler saved to /models/")
+print("\n✅ Model and scaler saved in /models")

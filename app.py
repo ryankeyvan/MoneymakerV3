@@ -3,26 +3,32 @@
 import streamlit as st
 from scanner import scan_stocks
 import pandas as pd
+import time
 
-st.set_page_config(page_title="📈 Money Maker AI", layout="wide")
+st.set_page_config(page_title="📈 Money Maker AI", layout="wide", page_icon="💰")
 
-st.markdown("<h1 style='text-align: center;'>🧠 Money Maker AI - Stock Breakout Scanner</h1>", unsafe_allow_html=True)
+st.title("💰 Money Maker AI Stock Breakout Scanner")
+st.markdown("Scan live stock data and predict breakouts using AI.")
 
-default_watchlist = ["AAPL", "TSLA", "AMD", "NVDA", "MSFT", "GOOGL", "CRM", "PYPL", "UBER", "DIS", "SHOP", "NFLX"]
-tickers = st.text_input("Enter comma-separated tickers:", ",".join(default_watchlist))
-ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+with st.sidebar:
+    st.header("⚙️ Settings")
+    default_watchlist = ["AAPL", "MSFT", "GOOGL", "NVDA", "AMZN", "TSLA", "META", "AMD", "NFLX", "INTC"]
+    tickers = st.text_area("Enter Tickers (comma separated)", value=", ".join(default_watchlist)).split(",")
+    tickers = [x.strip().upper() for x in tickers if x.strip()]
+    run_scan = st.button("🔍 Run Scan")
 
-if st.button("🔍 Scan for Breakouts"):
-    with st.spinner("Scanning..."):
-        results_df, logs = scan_stocks(ticker_list)
-
-    if not results_df.empty:
+if run_scan:
+    with st.spinner("📡 Scanning..."):
+        df, logs = scan_stocks(tickers)
         st.success("✅ Scan complete!")
-        st.dataframe(results_df.sort_values(by="Breakout Score", ascending=False), use_container_width=True)
-    else:
-        st.warning("No valid breakout data found.")
 
-    if logs:
-        with st.expander("📜 Scan Logs"):
-            for log in logs:
-                st.write(log)
+        if not df.empty:
+            st.subheader("📊 Scan Results")
+            st.dataframe(df)
+
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Download CSV", data=csv, file_name="scan_results.csv", mime="text/csv")
+
+        st.subheader("📜 Scan Logs")
+        for log in logs:
+            st.write(log)

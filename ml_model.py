@@ -14,7 +14,10 @@ model = joblib.load(model_path)
 scaler = joblib.load(scaler_path)
 
 def predict_breakout(volume_ratio, momentum, rsi):
-    X = np.array([[volume_ratio, momentum, rsi]])
-    X_scaled = scaler.transform(X)
-    prob = model.predict_proba(X_scaled)[0][1]
-    return round(prob, 3)
+    try:
+        X = np.array([volume_ratio, momentum, rsi]).reshape(1, -1)
+        X_scaled = scaler.transform(X)
+        prob = model.predict_proba(X_scaled)[0][1]
+        return round(prob, 3)
+    except Exception as e:
+        return f"❌ Prediction failed: {str(e)}"
