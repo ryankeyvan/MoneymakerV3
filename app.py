@@ -7,9 +7,11 @@ import os
 
 # === CONFIG ===
 MODEL_PATH = "models/breakout_model.pkl"
-TICKERS = [
-    "AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META",
-    "NFLX", "ORCL", "BABA", "DIS", "BAC", "NKE", "CRM"
+DEFAULT_TICKERS = [
+    "AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META", "NFLX", "ORCL",
+    "BABA", "DIS", "BAC", "NKE", "CRM", "INTC", "CSCO", "IBM", "QCOM",
+    "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT", "V", "MA", "JNJ", "PG",
+    "XOM", "CVX", "KO", "PFE", "MRK", "T", "VZ", "MCD"
 ]
 CONFIDENCE_THRESHOLD = 0.60
 
@@ -25,11 +27,21 @@ st.set_page_config(page_title="MoneyMakerV3", layout="wide")
 st.title("📈 MoneyMakerV3 — Breakout Stock Scanner")
 st.markdown("Scans tickers and ranks breakout candidates using your trained AI model.")
 
+ticker_input = st.text_input(
+    "Enter tickers to scan (comma separated), or leave empty to use default list:",
+    value=""
+)
+
+if ticker_input.strip():
+    tickers = [t.strip().upper() for t in ticker_input.split(",") if t.strip()]
+else:
+    tickers = DEFAULT_TICKERS
+
 if st.button("🚀 Scan Now"):
     results = []
 
-    with st.spinner("Scanning for breakouts using yfinance live data..."):
-        for ticker in TICKERS:
+    with st.spinner(f"Scanning {len(tickers)} tickers for breakouts..."):
+        for ticker in tickers:
             try:
                 df = yf.download(ticker, period="6mo", interval="1d", auto_adjust=False)
                 df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
