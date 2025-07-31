@@ -44,9 +44,10 @@ if mode == "Manual Tickers":
             st.markdown("---")
             for result in results:
                 st.subheader(f"📊 {result['Ticker']}")
-                if 'Error' in result.get('Sentiment', ''):
-                    st.error(f"❌ Could not retrieve data for {result['Ticker']}")
-                    continue
+                if isinstance(result['Current Price'], (int, float)):
+                    st.markdown(f"💰 **Current Price:** `${result['Current Price']:.2f}`")
+                else:
+                    st.markdown("💰 **Current Price:** N/A")
 
                 st.markdown(f"- **Breakout Score:** `{result['Breakout Score']}`")
                 st.markdown(f"- **Volume Ratio:** `{result['Volume Ratio']}`")
@@ -54,21 +55,19 @@ if mode == "Manual Tickers":
                 st.markdown(f"- **RSI:** `{result['RSI']}`")
                 st.markdown(f"- **Sentiment:** `{result['Sentiment']}`")
 
-                target = result.get('Target Price', 'N/A')
-                stop = result.get('Stop Loss', 'N/A')
-
-                if isinstance(target, (int, float)):
-                    st.markdown(f"🟢 **Target Price (1M):** `${target:.2f}`")
+                if isinstance(result.get("Target Price"), (int, float)):
+                    st.markdown(f"🟢 **Target Price (1M):** `${result['Target Price']:.2f}`")
                 else:
                     st.markdown("🟡 **Target Price (1M):** N/A")
 
-                if isinstance(stop, (int, float)):
-                    st.markdown(f"🔴 **Stop Loss:** `${stop:.2f}`")
+                if isinstance(result.get("Stop Loss"), (int, float)):
+                    st.markdown(f"🔴 **Stop Loss:** `${result['Stop Loss']:.2f}`")
                 else:
                     st.markdown("🟡 **Stop Loss:** N/A")
 
                 if result.get("Buy Signal"):
                     st.success("🔥 **Buy Signal Triggered!**")
+
                 st.markdown("---")
 
 # 🔹 AUTO MODE
@@ -90,14 +89,28 @@ elif mode == "Auto Scan ($5+)":
         st.success("✅ Showing Top 10 Stocks with Highest Breakout Score:")
         for result in top_10:
             st.subheader(f"📊 {result['Ticker']}")
+            if isinstance(result['Current Price'], (int, float)):
+                st.markdown(f"💰 **Current Price:** `${result['Current Price']:.2f}`")
+            else:
+                st.markdown("💰 **Current Price:** N/A")
+
             st.markdown(f"- **Breakout Score:** `{result['Breakout Score']}`")
             st.markdown(f"- **Volume Ratio:** `{result['Volume Ratio']}`")
             st.markdown(f"- **Momentum:** `{result['Momentum']}`")
             st.markdown(f"- **RSI:** `{result['RSI']}`")
             st.markdown(f"- **Sentiment:** `{result['Sentiment']}`")
-            st.markdown(f"🟢 **Target Price (1M):** `${result['Target Price']:.2f}`")
-            st.markdown(f"🔴 **Stop Loss:** `${result['Stop Loss']:.2f}`")
+
+            if isinstance(result.get("Target Price"), (int, float)):
+                st.markdown(f"🟢 **Target Price (1M):** `${result['Target Price']:.2f}`")
+            else:
+                st.markdown("🟡 **Target Price (1M):** N/A")
+
+            if isinstance(result.get("Stop Loss"), (int, float)):
+                st.markdown(f"🔴 **Stop Loss:** `${result['Stop Loss']:.2f}`")
+            else:
+                st.markdown("🟡 **Stop Loss:** N/A")
 
             if result.get("Buy Signal"):
                 st.success("🔥 **Buy Signal Triggered!**")
+
             st.markdown("---")
