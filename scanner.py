@@ -1,85 +1,83 @@
 import yfinance as yf
 import pandas as pd
 from ta.momentum import RSIIndicator
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
+from ta.trend import MACD
+from ta.volume import OnBalanceVolumeIndicator
+from datetime import datetime, timedelta
 import numpy as np
 
-# Dummy ML model to simulate breakout prediction
-def predict_breakout(volume_ratio, momentum, rsi):
-    features = np.array([[volume_ratio, momentum, rsi]])
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features)
-    # Simulate breakout score (normally use trained SVM or MLP)
-    score = 0.6 * volume_ratio + 0.3 * momentum + 0.1 * (rsi / 100)
-    return round(min(max(score, 0), 1), 2)
+def calculate_indicators(df):
+    df = df.copy()
+    df['RSI'] = RSIIndicator(close=df['Close'], window=14).rsi()
+    df['Momentum'] = df['Close'].pct_change(periods=14) * 100
+    df['Volume_Change'] = df['Volume'].pct_change(periods=3) * 100
+    df['OBV'] = OnBalanceVolumeIndicator(close=df['Close'], volume=df['Volume']).on_balance_volume()
+    return df
 
-def scan_single_stock(ticker):
-    try:
-        data = yf.download(ticker, period="3mo", interval="1d", progress=False)
-        if data.empty or "Close" not in data.columns:
-            return None
+def score_breakout(df):
+    latest = df.iloc[-1]
+    score = 0
+    if 50 < latest['RSI'] < 70:
+        score += 1
+    if latest['Momentum'] > 0:
+        score += 1
+    if latest['Volume_Change'] > 0:
+        score += 1
+    if latest['OBV'] > df['OBV'].mean():
+        score += 1
+    return round(score * 0.25, 2)  # 0–1 scale
 
-        data.dropna(inplace=True)
-        close = data["Close"]
-        volume = data["Volume"]
+def project_1m_price(df):
+    recent_growth = df['Close'].pct_change().rolling(window=5).mean().iloc[-1]
+    projected = df['Close'].iloc[-1] * (1 + (recent_growth * 21))  # ~21 trading days
+    return round(projected, 2)
 
-        # RSI Calculation
-        rsi = RSIIndicator(close).rsi().iloc[-1]
-
-        # Volume spike
-        avg_vol = volume.rolling(window=10).mean().iloc[-1]
-        vol_ratio = volume.iloc[-1] / avg_vol if avg_vol != 0 else 0
-
-        # Momentum (% gain over last 10 days)
-        momentum = (close.iloc[-1] - close.iloc[-10]) / close.iloc[-10] * 100 if len(close) >= 10 else 0
-
-        breakout_score = predict_breakout(vol_ratio, momentum, rsi)
-        current_price = round(close.iloc[-1], 2)
-
-        return {
-            "Ticker": ticker,
-            "Breakout Score": breakout_score,
-            "Current Price": current_price,
-            "RSI": round(rsi, 2),
-            "Momentum (%)": round(momentum, 2),
-            "Volume Change (%)": round((vol_ratio - 1) * 100, 2),
-            "Projected 1M Price": round(current_price * (1 + breakout_score * 0.2), 2),
-            "Signal": "🔥 Buy" if breakout_score >= 0.7 else "🧐 Watch"
-        }
-
-    except Exception:
-        return None
-
-# Get 100 most popular tickers as fallback for auto scan
-def get_top_100_stocks():
-    return [
-        "AAPL", "MSFT", "NVDA", "TSLA", "GOOGL", "META", "AMZN", "NFLX", "AMD", "INTC",
-        "BABA", "CRM", "PYPL", "SHOP", "BA", "DIS", "JPM", "KO", "PEP", "NKE",
-        "XOM", "CVX", "PFE", "MRNA", "T", "VZ", "WMT", "COST", "TGT", "MCD",
-        "WFC", "GS", "MS", "SBUX", "SQ", "ROKU", "PLTR", "UBER", "LYFT", "SNAP",
-        "SOFI", "DKNG", "ABNB", "RBLX", "F", "GM", "TM", "NIO", "RIVN", "LCID",
-        "TSM", "QCOM", "TXN", "ADBE", "ORCL", "SAP", "BIDU", "JD", "Z", "ETSY",
-        "ZM", "DOCU", "TWLO", "NET", "CRWD", "PANW", "OKTA", "ZS", "DDOG", "MDB",
-        "SPOT", "SONY", "TTD", "BB", "GE", "LMT", "RTX", "NOC", "FDX", "UPS",
-        "HON", "CAT", "DE", "MMM", "IBM", "CSCO", "HPQ", "MU", "GME", "BBBY",
-        "CVS", "UNH", "MRK", "JNJ", "AZN", "LLY", "BIIB", "REGN", "VRTX", "SNY"
-    ]
-
-def scan_stocks(tickers=None, auto=False, update_progress=None):
-    if auto or not tickers:
-        tickers = get_top_100_stocks()
-
+def scan_stocks(tickers, auto=False, update_progress=None, st_log=None):
     results = []
+    logs = []
     total = len(tickers)
 
-    for idx, ticker in enumerate(tickers):
-        result = scan_single_stock(ticker)
-        if result:
+    for i, ticker in enumerate(tickers):
+        try:
+            data = yf.download(ticker, period="3mo", interval="1d", progress=False)
+            if data.empty or len(data) < 20:
+                msg = f"⚠️ No data for {ticker}"
+                if st_log: st_log.write(msg)
+                logs.append(msg)
+                continue
+
+            df = calculate_indicators(data.dropna())
+            if df.empty:
+                msg = f"⚠️ Insufficient data after indicator calc for {ticker}"
+                if st_log: st_log.write(msg)
+                logs.append(msg)
+                continue
+
+            score = score_breakout(df)
+            current_price = round(df['Close'].iloc[-1], 2)
+            target_price = project_1m_price(df)
+            stop_loss = round(current_price * 0.93, 2)
+
+            result = {
+                "Ticker": ticker,
+                "Current Price": current_price,
+                "Breakout Score": score,
+                "Projected 1M Price": target_price,
+                "Stop Loss": stop_loss,
+                "Signal": "🔥 Buy" if score >= 0.7 else "🧐 Watch"
+            }
             results.append(result)
 
-        if update_progress:
-            update_progress((idx + 1) / total)
+        except Exception as e:
+            msg = f"❌ {ticker} error: {e}"
+            if st_log: st_log.write(msg)
+            logs.append(msg)
 
-    df = pd.DataFrame(results)
-    return df
+        if update_progress:
+            update_progress((i + 1) / total)
+
+    return results, logs
+
+def get_all_stocks_above_5_dollars():
+    # Placeholder — replace with your source of 100+ tickers over $5
+    return ["AAPL", "TSLA", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "NFLX", "AMD", "INTC", "BA", "JPM", "V", "DIS", "UBER", "LYFT", "PLTR", "SOFI", "SNAP", "SHOP", "COIN"]
