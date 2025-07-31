@@ -1,99 +1,97 @@
-import os
+# train_model.py
+import yfinance as yf
 import numpy as np
 import pandas as pd
-import yfinance as yf
-import joblib
-
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_recall_curve
+from sklearn.metrics import f1_score
+import pickle
+import os
 
-from utils.preprocessing import preprocess_for_training
-
-# === CONFIG ===
+# 1) List of tickers to include in training:
 TICKERS = [
-    "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "GOOG", "META", "NFLX", "ORCL",
-    "BABA", "DIS", "BAC", "NKE", "CRM", "INTC", "CSCO", "IBM", "QCOM",
-    "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT", "V", "MA", "JNJ", "PG",
-    "XOM", "CVX", "KO", "PFE", "MRK", "T", "VZ", "MCD"
+    "AAPL","MSFT","NVDA","GOOG","AMZN",
+    "TSLA","META","NFLX","IBM","ORCL",
+    # …add more symbols here to improve your model
 ]
-FUTURE_DAYS = 5
-BREAKOUT_THRESHOLD = 1.10  # used to create labels (10% rise)
-MODEL_PATH = "models/breakout_model.pkl"
 
-# === FETCH & LABEL ===
-X_all, y_all = [], []
+def fetch_data(ticker, period="1y", interval="1d"):
+    df = yf.download(ticker, period=period, interval=interval, progress=False)
+    return df
 
-print("📊 Gathering and labeling data...")
-for ticker in TICKERS:
-    print(f"  • {ticker}", end="…", flush=True)
-    df = yf.download(ticker, period="2y", interval="1d", auto_adjust=False)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+def compute_features_and_labels(df, lookahead=5, breakout_pct=0.10):
+    """
+    Features: 
+      - last day return
+      - 5d avg return
+      - 20d volatility
+      - volume spike ratio
+    Label = 1 if max return over next `lookahead` days ≥ breakout_pct, else 0
+    """
+    closes = df['Close']
+    returns = closes.pct_change().fillna(0)
+    vol = df['Volume']
+    
+    # features matrix
+    feats = []
+    labs = []
+    for i in range(20, len(df) - lookahead):
+        window = returns.iloc[i-20:i]
+        feat = [
+            returns.iloc[i],                     # last-day return
+            window[-5:].mean(),                  # 5d avg
+            window.std(),                        # 20d vol
+            vol.iloc[i] / vol.iloc[i-5:i].mean() # volume spike
+        ]
+        future_max = (closes.iloc[i+1:i+1+lookahead] / closes.iloc[i] - 1).max()
+        label = int(future_max >= breakout_pct)
+        feats.append(feat)
+        labs.append(label)
+    return np.array(feats), np.array(labs)
 
-    if df.empty or len(df) < FUTURE_DAYS + 2:
-        print(" skipped (not enough data)")
+# collect all tickers' data
+all_X = []
+all_y = []
+for t in TICKERS:
+    df = fetch_data(t)
+    if df is None or df.empty: 
+        print(f"⚠️  No data for {t}, skipping")
         continue
+    X, y = compute_features_and_labels(df)
+    all_X.append(X)
+    all_y.append(y)
 
-    # create breakout label
-    df["future_max"] = df["Close"].rolling(window=FUTURE_DAYS).max().shift(-FUTURE_DAYS)
-    df = df.dropna(subset=["future_max", "Close"])
-    if df.empty:
-        print(" skipped (no labeled data)")
-        continue
+X = np.vstack(all_X)
+y = np.concatenate(all_y)
 
-    # extract features and labels
-    X_scaled, df_proc = preprocess_for_training(df)
-    df_proc = df_proc.tail(len(X_scaled))
-    labels = (df_proc["future_max"].values
-              > df_proc["Close"].values * BREAKOUT_THRESHOLD).astype(int)
-
-    if len(labels) == len(X_scaled):
-        X_all.extend(X_scaled)
-        y_all.extend(labels)
-        print(f" {len(labels)} samples")
-    else:
-        print(" skipped (length mismatch)")
-
-if not X_all:
-    raise RuntimeError("❌ No data available for training.")
-
-# === TRAIN/TEST SPLIT ===
+# split
 X_train, X_test, y_train, y_test = train_test_split(
-    X_all, y_all, test_size=0.2, random_state=42
+    X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-# === MODEL TRAINING ===
-print("\n🧠 Training MLPClassifier…")
-model = MLPClassifier(hidden_layer_sizes=(128, 64),
-                      max_iter=500, solver="adam", random_state=42)
+# train
+model = MLPClassifier(
+    hidden_layer_sizes=(50,25),
+    activation='relu',
+    solver='adam',
+    max_iter=500,
+    random_state=42
+)
 model.fit(X_train, y_train)
 
+# evaluate & choose threshold by F1 on validation
+probs = model.predict_proba(X_test)[:,1]
+best_thresh = 0.0
+best_f1 = 0
+for thr in np.linspace(0,1,101):
+    preds = (probs >= thr).astype(int)
+    f1 = f1_score(y_test, preds)
+    if f1 > best_f1:
+        best_f1, best_thresh = f1, thr
+print(f"🔍 Best validation F1 = {best_f1:.4f} at threshold = {best_thresh:.3f}")
+
+# save model as binary pickle
 os.makedirs("models", exist_ok=True)
-joblib.dump(model, MODEL_PATH)
-print(f"✅ Model saved to {MODEL_PATH}")
-
-# === EVALUATION: ACCURACY ===
-acc = accuracy_score(y_test, model.predict(X_test))
-print(f"🎯 Test accuracy: {acc*100:.2f}%")
-
-# === THRESHOLD SWEEP FOR PRECISION/RECALL/F1 ===
-probs = model.predict_proba(X_test)[:, 1]
-precisions, recalls, thresholds = precision_recall_curve(y_test, probs)
-f1s = 2 * precisions * recalls / (precisions + recalls + 1e-12)
-
-best_idx = np.argmax(f1s)
-best_thresh = thresholds[best_idx]
-best_f1 = f1s[best_idx]
-best_prec = precisions[best_idx]
-best_rec = recalls[best_idx]
-
-print("\n🔧 Threshold tuning results:")
-print(f"  ▶ Best by F1 = {best_f1:.3f} at threshold = {best_thresh:.3f}")
-print(f"    Precision = {best_prec:.3f}, Recall = {best_rec:.3f}")
-
-print("\nTop 5 thresholds by F1:")
-top5 = np.argsort(f1s)[-5:][::-1]
-for i in top5:
-    print(f"    thresh={thresholds[i]:.3f} → F1={f1s[i]:.3f}")
-
+with open("models/breakout_model.pkl", "wb") as f:
+    pickle.dump(model, f)
+print("✅ Model saved to models/breakout_model.pkl")
