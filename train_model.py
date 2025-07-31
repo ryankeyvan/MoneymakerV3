@@ -15,7 +15,7 @@ TICKERS = [
     "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT", "V", "MA", "JNJ", "PG",
     "XOM", "CVX", "KO", "PFE", "MRK", "T", "VZ", "MCD"
 ]
-FUTURE_DAYS = 5
+FUTURE_DAYS = 3  # reduced from 5
 BREAKOUT_THRESHOLD = 1.10  # 10% rise = breakout
 
 X_all = []
@@ -37,8 +37,9 @@ for ticker in TICKERS:
         df["future_max"] = df["Close"].rolling(window=FUTURE_DAYS).max().shift(-FUTURE_DAYS)
         df = df.dropna(subset=["future_max", "Close"])
 
+        print(f"{ticker}: After dropping NA, df shape = {df.shape}")
         if df.empty:
-            print(f"⚠️ Skipping {ticker}: Not enough labeled data.")
+            print(f"⚠️ Skipping {ticker}: DataFrame empty after dropping NA")
             continue
 
         # Preprocess features and get processed df
