@@ -1,29 +1,32 @@
 import pandas as pd
 import joblib
 import yfinance as yf
-from utils.preprocessing import preprocess_single_stock, ensure_2d_array, safe_scalar_from_series
+from utils.preprocessing import preprocess_single_stock
+from sklearn.exceptions import NotFittedError
 import os
 
 # === CONFIG ===
 MODEL_PATH = "models/breakout_model.pkl"
-DEFAULT_TICKERS = [
-    "AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META", "NFLX", "ORCL",
-    "BABA", "DIS", "BAC", "NKE", "CRM", "INTC", "CSCO", "IBM", "QCOM",
-    "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT", "V", "MA", "JNJ", "PG",
-    "XOM", "CVX", "KO", "PFE", "MRK", "T", "VZ", "MCD"
+TICKERS = [
+    "AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META", "NFLX",
+    "ORCL", "BABA", "DIS", "BAC", "NKE", "CRM", "INTC", "CSCO",
+    "IBM", "QCOM", "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT",
+    "V", "MA", "JNJ", "PG", "XOM", "CVX", "KO", "PFE", "MRK",
+    "T", "VZ", "MCD"
 ]
 CONFIDENCE_THRESHOLD = 0.60
 
+# === Load ML model ===
 if not os.path.exists(MODEL_PATH):
-    raise FileNotFoundError("❌ Model not found. Please train it with train_model.py first.")
+    raise FileNotFoundError("❌ Model not found. Train it with train_model.py first.")
 
 model = joblib.load(MODEL_PATH)
 
 results = []
 
-print(f"📊 Scanning {len(DEFAULT_TICKERS)} stocks...\n")
+print("📊 Scanning stocks...\n")
 
-for ticker in DEFAULT_TICKERS:
+for ticker in TICKERS:
     print(f"🔎 Scanning {ticker}...")
 
     try:
@@ -35,26 +38,28 @@ for ticker in DEFAULT_TICKERS:
             continue
 
         X_scaled, df_processed = preprocess_single_stock(df)
+
         if len(X_scaled) == 0:
             print(f"⚠️ Skipping {ticker}: No valid features.")
             continue
 
-        X_scaled = ensure_2d_array(X_scaled)
-
         probs = model.predict_proba(X_scaled)
-        breakout_score = float(probs[-1, 1]) if probs.ndim == 2 else float(probs[-1])
+        prob = float(probs[-1, 1])  # Extract scalar breakout probability
 
-        last_close = safe_scalar_from_series(df_processed["Close"])
+        if prob >= CONFIDENCE_THRESHOLD:
+            last_close = float(df_processed["Close"].values.flatten()[-1])
 
-        if breakout_score >= CONFIDENCE_THRESHOLD:
-            result = {
+            print(f"✅ {ticker}: Score {prob:.4f}, Last Close {last_close:.2f}")
+
+            results.append({
                 "Ticker": ticker,
-                "Breakout Score": round(breakout_score, 4),
+                "Breakout Score": round(prob, 4),
                 "Last Close": round(last_close, 2)
-            }
-            results.append(result)
-            print(f"✅ {ticker}: Score {breakout_score:.2f}")
+            })
 
+    except NotFittedError:
+        print("❌ Model is not trained yet.")
+        break
     except Exception as e:
         print(f"❌ Error with {ticker}: {e}")
 
