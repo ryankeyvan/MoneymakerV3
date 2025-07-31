@@ -9,11 +9,10 @@ from scanner import scan_tickers
 st.set_page_config(page_title="MoneyMakerV3 AI Stock Breakout", layout="wide")
 st.title("💰 MoneyMakerV3 AI Stock Breakout Assistant")
 
-# persist watchlist
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
 
-# sidebar
+# Sidebar
 st.sidebar.header("🍽️ Watchlist")
 inp = st.sidebar.text_input("Add tickers (comma separated)")
 if st.sidebar.button("Add"):
@@ -23,10 +22,9 @@ if st.sidebar.button("Add"):
 if st.sidebar.button("Clear"):
     st.session_state.watchlist = []
     st.sidebar.info("Watchlist cleared.")
-
 st.sidebar.write("**Current:**", st.session_state.watchlist)
 
-# scanner UI
+# Scanner UI
 st.subheader("📈 Stock Scanner")
 use_wl = st.checkbox("Use watchlist", value=True)
 if use_wl:
@@ -40,20 +38,25 @@ if st.button("Run Scan"):
     else:
         with st.spinner("Scanning…"):
             results, failures = scan_tickers(tickers)
+
         df = pd.DataFrame(results)
+        st.subheader("🔍 Scan Results")
         st.dataframe(df)
 
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download CSV", csv,
-                           file_name=f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+        st.download_button(
+            "Download CSV",
+            df.to_csv(index=False).encode("utf-8"),
+            file_name=f"scan_{datetime.now():%Y%m%d_%H%M%S}.csv"
+        )
 
         if failures:
             st.subheader("⚠️ Failures")
             st.write(failures)
 
-        st.subheader("📊 Price Chart")
-        choice = st.selectbox("Select ticker", df["ticker"].tolist())
-        if choice:
+        # Only show chart if we have results
+        if not df.empty:
+            st.subheader("📊 Price Chart")
+            choice = st.selectbox("Select ticker", df["ticker"].tolist())
             hist = yf.download(choice, period="6mo", interval="1d", progress=False)
             if not hist.empty:
                 fig, ax = plt.subplots()
@@ -63,4 +66,6 @@ if st.button("Run Scan"):
                 ax.set_ylabel("Price ($)")
                 st.pyplot(fig)
             else:
-                st.info("No history for this ticker.")
+                st.info("No historical data for this ticker.")
+        else:
+            st.info("No successful scan results to chart.")

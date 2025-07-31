@@ -5,15 +5,11 @@ import pickle
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-# Load trained breakout model
 MODEL_PATH = "models/breakout_model.pkl"
 with open(MODEL_PATH, "rb") as f:
     model = pickle.load(f)
 
-# Tuned F1 threshold from train_model.py output
 F1_THRESHOLD = 0.180
-
-# Simple in-memory cache for historical data
 data_cache = {}
 
 def get_stock_data(ticker, period="6mo", interval="1d"):
@@ -28,10 +24,10 @@ def compute_features(df):
     closes = df["Close"]
     returns = closes.pct_change().fillna(0)
     return np.array([
-        returns.iloc[-1],                     # last-day return
-        returns.iloc[-5:].mean(),             # 5-day avg return
-        returns.iloc[-20:].std(),             # 20-day volatility
-        df["Volume"].iloc[-1] / df["Volume"].iloc[-5:].mean()  # volume spike ratio
+        returns.iloc[-1],
+        returns.iloc[-5:].mean(),
+        returns.iloc[-20:].std(),
+        df["Volume"].iloc[-1] / df["Volume"].iloc[-5:].mean()
     ])
 
 def scan_single_stock(ticker):
@@ -39,14 +35,13 @@ def scan_single_stock(ticker):
         df = get_stock_data(ticker)
         if df is None or df.empty:
             return {"ticker": ticker, "error": "No data fetched"}
-        feat = compute_features(df)
-        proba = model.predict_proba([feat])[0][1]
+        feat = compute_features(df).reshape(1, -1)    # ← ensure a 2D array
+        proba = model.predict_proba(feat)[0][1]
         price = df["Close"].iloc[-1]
-        decision = "BUY" if proba >= F1_THRESHOLD else "HOLD"
         return {
             "ticker": ticker,
             "score": round(proba, 4),
-            "decision": decision,
+            "decision": "BUY" if proba >= F1_THRESHOLD else "HOLD",
             "current_price": round(price, 2),
             "target_price": round(price * 1.10, 2),
             "stop_loss": round(price * 0.95, 2)
@@ -68,9 +63,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python scanner.py TICKER1 TICKER2 …")
         sys.exit(1)
-    ticks = sys.argv[1:]
-    print(f"Starting scan of {len(ticks)} tickers… threshold={F1_THRESHOLD}\n")
-    out, errs = scan_tickers(ticks)
+    out, errs = scan_tickers(sys.argv[1:])
     print("\n=== RESULTS ===")
     for r in out: print(r)
     if errs:
