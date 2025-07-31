@@ -1,79 +1,78 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import joblib
-from utils.preprocessing import preprocess_single_stock, ensure_2d_array, safe_scalar_from_series
-import os
+import matplotlib.pyplot as plt
+from datetime import datetime
+from scanner import scan_tickers
 
-# === CONFIG ===
-MODEL_PATH = "models/breakout_model.pkl"
-DEFAULT_TICKERS = [
-    "AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META", "NFLX", "ORCL",
-    "BABA", "DIS", "BAC", "NKE", "CRM", "INTC", "CSCO", "IBM", "QCOM",
-    "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT", "V", "MA", "JNJ", "PG",
-    "XOM", "CVX", "KO", "PFE", "MRK", "T", "VZ", "MCD"
-]
-CONFIDENCE_THRESHOLD = 0.60
+# App configuration
+st.set_page_config(page_title="MoneyMakerV3 AI Stock Breakout Assistant", layout="wide")
+st.title("💰 MoneyMakerV3 AI Stock Breakout Assistant")
 
-if not os.path.exists(MODEL_PATH):
-    st.error("❌ Model not found. Please train it using train_model.py first.")
-    st.stop()
+# Session state for watchlist persistence
+if 'watchlist' not in st.session_state:
+    st.session_state.watchlist = []
 
-model = joblib.load(MODEL_PATH)
+# Sidebar: Watchlist management
+st.sidebar.header("🍽️ Watchlist")
+ticker_input = st.sidebar.text_input("Enter tickers (comma separated)")
+if st.sidebar.button("Add to Watchlist"):
+    new = [t.strip().upper() for t in ticker_input.split(',') if t.strip()]
+    st.session_state.watchlist = list(dict.fromkeys(st.session_state.watchlist + new))
+    st.sidebar.success(f"Added: {', '.join(new)}")
+if st.sidebar.button("Clear Watchlist"):
+    st.session_state.watchlist = []
+    st.sidebar.info("Watchlist cleared.")
 
-st.set_page_config(page_title="MoneyMakerV3", layout="wide")
-st.title("📈 MoneyMakerV3 — Breakout Stock Scanner")
-st.markdown("Scans tickers and ranks breakout candidates using your trained AI model.")
+st.sidebar.markdown("**Current Watchlist:**")
+st.sidebar.write(st.session_state.watchlist)
 
-ticker_input = st.text_input(
-    "Enter tickers to scan (comma separated), or leave empty to use default list:",
-    value=""
-)
-
-if ticker_input.strip():
-    tickers = [t.strip().upper() for t in ticker_input.split(",") if t.strip()]
+# Main scanning interface
+st.subheader("📈 Stock Scanner")
+use_watchlist = st.checkbox("Use watchlist", value=True)
+if use_watchlist:
+    tickers = st.session_state.watchlist
 else:
-    tickers = DEFAULT_TICKERS
+    tickers = [t.strip().upper() for t in st.text_input("Tickers to scan (comma separated)").split(',') if t.strip()]
 
-if st.button("🚀 Scan Now"):
-    results = []
-
-    with st.spinner(f"Scanning {len(tickers)} tickers for breakouts..."):
-        for ticker in tickers:
-            try:
-                df = yf.download(ticker, period="6mo", interval="1d", auto_adjust=False)
-                df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
-
-                if df.empty or len(df) < 50:
-                    continue
-
-                X_scaled, df_processed = preprocess_single_stock(df)
-                if len(X_scaled) == 0:
-                    continue
-
-                X_scaled = ensure_2d_array(X_scaled)
-
-                probs = model.predict_proba(X_scaled)
-                prob = float(probs[-1, 1]) if probs.ndim == 2 else float(probs[-1])
-
-                last_close = safe_scalar_from_series(df_processed["Close"])
-
-                if prob >= CONFIDENCE_THRESHOLD:
-                    results.append({
-                        "Ticker": ticker,
-                        "Breakout Score": round(prob, 4),
-                        "Last Close": round(last_close, 2)
-                    })
-
-            except Exception as e:
-                st.error(f"{ticker} error: {e}")
-
-    if results:
-        df_out = pd.DataFrame(results).sort_values(by="Breakout Score", ascending=False)
-        st.success(f"✅ {len(df_out)} breakout candidates found.")
-        st.dataframe(df_out)
-
-        csv = df_out.to_csv(index=False).encode()
-        st.download_button("📥 Download Watchlist (CSV)", csv, file_name="watchlist.csv")
+if st.button("Run Scan"):
+    if not tickers:
+        st.warning("Please add at least one ticker to scan.")
     else:
-        st.warning("❌ No breakouts found today.")
+        # Run scanner
+        with st.spinner("Scanning stocks, please wait..."):
+            results, failures = scan_tickers(tickers)
+
+        df = pd.DataFrame(results)
+        st.subheader("🔍 Scan Results")
+        st.dataframe(df)
+
+        # Downloadable CSV
+        csv_data = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "Download results as CSV", csv_data,
+            file_name=f"scan_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime='text/csv'
+        )
+
+        # Display failures
+        if failures:
+            st.subheader("⚠️ Failures")
+            st.write(failures)
+
+        # Price chart section
+        st.subheader("📊 Price Chart")
+        selected = st.selectbox(
+            "Select a ticker to view its 6-month price history", 
+            df['ticker'].tolist() if not df.empty else []
+        )
+        if selected:
+            hist = yf.download(selected, period="6mo", interval="1d", progress=False)
+            if not hist.empty:
+                fig, ax = plt.subplots()
+                ax.plot(hist.index, hist['Close'], linewidth=1.5)
+                ax.set_title(f"{selected} Price (6mo)")
+                ax.set_xlabel("Date")
+                ax.set_ylabel("Close Price ($)")
+                st.pyplot(fig)
+            else:
+                st.info("No historical data available for selected ticker.")
