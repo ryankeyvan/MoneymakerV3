@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from alpha_vantage.timeseries import TimeSeries
+import yfinance as yf
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -9,7 +9,6 @@ import os
 from utils.preprocessing import preprocess_for_training
 
 # === CONFIG ===
-API_KEY = "JMOVPJWW0ZA4ASVW"  # Your Alpha Vantage API key
 TICKERS = [
     "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "GOOG", "META", "NFLX", "ORCL",
     "BABA", "DIS", "BAC", "NKE", "CRM", "INTC", "CSCO", "IBM", "QCOM",
@@ -19,38 +18,24 @@ TICKERS = [
 FUTURE_DAYS = 5
 BREAKOUT_THRESHOLD = 1.10  # 10% rise = breakout
 
-# Initialize Alpha Vantage API client
-ts = TimeSeries(key=API_KEY, output_format='pandas')
-
-def fetch_data_alpha(ticker):
-    print(f"📈 Fetching {ticker} from Alpha Vantage...")
-    try:
-        data, _ = ts.get_daily(symbol=ticker, outputsize='full')
-        data.rename(columns={
-            '1. open': 'Open',
-            '2. high': 'High',
-            '3. low': 'Low',
-            '4. close': 'Close',
-            '5. volume': 'Volume'
-        }, inplace=True)
-        data = data.sort_index()
-        return data[["Open", "High", "Low", "Close", "Volume"]].dropna()
-    except Exception as e:
-        print(f"❌ Error fetching {ticker}: {e}")
-        return pd.DataFrame()
-
 X_all = []
 y_all = []
 
-print("📊 Starting model training...")
+print("📊 Starting model training using yfinance...")
 
 for ticker in TICKERS:
-    df = fetch_data_alpha(ticker)
+    print(f"📈 Fetching {ticker} from yfinance...")
+    df = yf.download(ticker, period="2y", interval="1d", auto_adjust=False)
 
-    if df.empty:
-        print(f"⚠️ Skipping {ticker}: No usable data.")
+    # Fix for MultiIndex columns from yfinance
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    if df.empty or len(df) < 50:
+        print(f"⚠️ Skipping {ticker}: Not enough data.")
         continue
 
+    # Create breakout target column
     df["future_max"] = df["Close"].rolling(window=FUTURE_DAYS).max().shift(-FUTURE_DAYS)
     df = df.dropna(subset=["future_max", "Close"])
 
@@ -79,14 +64,14 @@ for ticker in TICKERS:
 if not X_all:
     raise RuntimeError("❌ No data available for training.")
 
-# Audit breakout label distribution
+# Check breakout label distribution
 y_array = np.array(y_all)
 unique, counts = np.unique(y_array, return_counts=True)
 label_counts = dict(zip(unique, counts))
 print("\n📊 Breakout label distribution in training data:")
 print(label_counts)
 
-# Sample label and feature printout
+# Sample some labels and features
 print("\nSample training labels and features:")
 for i in range(5):
     print(f"Label: {y_all[i]}, Features (first 5): {X_all[i][:5]}")

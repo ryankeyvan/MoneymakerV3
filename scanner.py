@@ -6,10 +6,12 @@ import os
 
 # === CONFIG ===
 MODEL_PATH = "models/breakout_model.pkl"
-TICKERS = ["NVDA"]  # Change this ticker as needed
-CONFIDENCE_THRESHOLD = 0.4  # Lowered to catch more signals
+TICKERS = [
+    "AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META",
+    "NFLX", "ORCL", "BABA", "DIS", "BAC", "NKE", "CRM"
+]
+CONFIDENCE_THRESHOLD = 0.60
 
-# === Load ML model ===
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError("❌ Model not found. Train it with train_model.py first.")
 
@@ -23,10 +25,9 @@ for ticker in TICKERS:
     try:
         df = yf.download(ticker, period="6mo", interval="1d", auto_adjust=False)
 
+        # Fix MultiIndex columns issue
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-
-        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
         if df.empty or len(df) < 50:
             print(f"⚠️ Skipping {ticker}: Not enough data.")
@@ -39,13 +40,15 @@ for ticker in TICKERS:
             continue
 
         probs = model.predict_proba(X_scaled)
-        prob = float(probs[-1, 1])
+        breakout_score = probs[-1][1]  # Latest day
 
-        print(f"{ticker}: Breakout score {prob:.4f}")
+        print(f"{ticker}: Breakout score {breakout_score:.4f}")
 
-        if prob >= CONFIDENCE_THRESHOLD:
+        if breakout_score >= CONFIDENCE_THRESHOLD:
             last_close = float(df_processed["Close"].values.flatten()[-1])
-            print(f"✅ {ticker} PASSES threshold with score {prob:.4f}, Last Close {last_close:.2f}")
+            print(f"✅ {ticker}: Score {breakout_score:.4f}, Last Close {last_close:.2f}")
 
     except Exception as e:
         print(f"❌ Error with {ticker}: {e}")
+
+print("\nScan complete.")
