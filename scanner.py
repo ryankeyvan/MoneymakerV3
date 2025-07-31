@@ -1,100 +1,43 @@
 import yfinance as yf
 from ta.momentum import RSIIndicator
-from utils.sentiment import get_sentiment_score
-from ml_model import predict_breakout
-import pandas as pd
-import traceback
 
-def scan_single_stock(ticker):
+def scan_single_stock(ticker, ml_model=None):
     try:
-        data = yf.download(ticker, period="3mo", interval="1d", progress=False)
-        if data.empty or len(data) < 14:
-            return None, f"⚠️ {ticker}: Not enough data"
+        df = yf.download(ticker, period="6mo", interval="1d", progress=False)
+        if df.empty or "Close" not in df:
+            return None
 
-        recent = data.tail(14)
+        # Calculate technical indicators
+        rsi = RSIIndicator(df["Close"]).rsi()
+        momentum = df["Close"].diff(14)
+        volume_change = df["Volume"].pct_change(periods=14) * 100
 
-        try:
-            rsi = RSIIndicator(close=recent["Close"]).rsi().iloc[-1]
-        except:
-            rsi = 50.0
+        rsi_val = rsi.iloc[-1] if not rsi.empty else 0
+        momentum_val = momentum.iloc[-1] if not momentum.empty else 0
+        volume_val = volume_change.iloc[-1] if not volume_change.empty else 0
+        current_price = df["Close"].iloc[-1] if not df.empty else 0
 
-        try:
-            momentum = recent["Close"].iloc[-1] / recent["Close"].iloc[0] - 1
-        except:
-            momentum = 0
+        # Calculate breakout score
+        score = 0
+        if 45 < rsi_val < 65:
+            score += 0.3
+        if momentum_val > 0:
+            score += 0.3
+        if volume_val > 5:
+            score += 0.4
 
-        try:
-            volume_ratio = recent["Volume"].iloc[-1] / recent["Volume"].mean()
-        except:
-            volume_ratio = 1.0
-
-        try:
-            sentiment = get_sentiment_score(ticker) or "N/A"
-        except:
-            sentiment = "N/A"
-
-        try:
-            breakout_score = predict_breakout(volume_ratio, momentum + 1, rsi)
-        except:
-            breakout_score = 0.0
-
-        current_price = recent["Close"].iloc[-1]
-        target_price = round(current_price * 1.15, 2)
-        stop_loss = round(current_price * 0.93, 2)
+        # Simple 1-month projected price estimation
+        projected_price = current_price * (1 + score)
 
         return {
             "Ticker": ticker,
-            "Breakout Score": round(breakout_score, 3),
-            "RSI": round(rsi, 2),
-            "Momentum": round(momentum * 100, 2),
-            "Volume Change": round((volume_ratio - 1) * 100, 2),
+            "Breakout Score": round(score, 2),
+            "RSI": round(rsi_val, 2),
+            "Momentum": round(momentum_val, 2),
+            "Volume Change": round(volume_val, 2),
             "Current Price": round(current_price, 2),
-            "Target Price": target_price,
-            "Stop Loss": stop_loss,
-            "Sentiment": sentiment,
-            "Signal": "🔥 Buy" if breakout_score >= 0.7 else "🧐 Watch"
-        }, f"✅ {ticker} scanned"
+            "Target Price (1M)": round(projected_price, 2)
+        }
 
     except Exception as e:
-        return None, f"❌ {ticker} error: {e}"
-
-def scan_stocks(tickers, update_progress=None):
-    import concurrent.futures
-    from queue import Queue
-
-    results = []
-    logs = []
-    q = Queue()
-    total = len(tickers)
-
-    def wrapped(ticker):
-        result, log = scan_single_stock(ticker)
-        if result:
-            q.put(result)
-        logs.append(log)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(wrapped, ticker) for ticker in tickers]
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            if update_progress:
-                update_progress((i + 1) / total)
-
-    while not q.empty():
-        results.append(q.get())
-
-    return results, logs
-
-# ✅ Added this missing function
-def get_all_stocks_above_5_dollars():
-    return [
-        "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "NFLX", "V", "MA",
-        "JPM", "UNH", "HD", "DIS", "ADBE", "INTC", "AMD", "CRM", "BAC", "KO",
-        "PEP", "PFE", "LLY", "ABNB", "AVGO", "T", "XOM", "CVX", "QCOM", "TXN",
-        "SBUX", "MRK", "WMT", "COST", "GS", "NKE", "PYPL", "ORCL", "NOW", "CMCSA",
-        "GE", "IBM", "MDLZ", "AMAT", "VRTX", "GILD", "TMUS", "REGN", "ISRG", "BKNG",
-        "DE", "FDX", "LMT", "RTX", "BLK", "TGT", "MMM", "MO", "CL", "COP",
-        "F", "GM", "DAL", "UAL", "CSCO", "ETSY", "PLTR", "SNOW", "SHOP", "ZS",
-        "PANW", "DDOG", "DOCU", "ROKU", "TWLO", "BIDU", "UBER", "LYFT", "SQ", "ROST",
-        "TJX", "BBY", "EXPE", "MRNA", "BMY", "CVS", "WBA", "CCL", "RCL", "NCLH",
-        "DKNG", "CRWD", "NET", "WBD", "PARA", "LULU", "EA", "ATVI", "TTD", "EBAY"
-    ]
+        return None
