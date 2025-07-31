@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 import joblib
 from utils.preprocessing import preprocess_single_stock
+import numpy as np
 import os
 
 # === CONFIG ===
@@ -15,14 +16,12 @@ DEFAULT_TICKERS = [
 ]
 CONFIDENCE_THRESHOLD = 0.60
 
-# === Load Model ===
 if not os.path.exists(MODEL_PATH):
     st.error("❌ Model not found. Please train it using train_model.py first.")
     st.stop()
 
 model = joblib.load(MODEL_PATH)
 
-# === Streamlit UI ===
 st.set_page_config(page_title="MoneyMakerV3", layout="wide")
 st.title("📈 MoneyMakerV3 — Breakout Stock Scanner")
 st.markdown("Scans tickers and ranks breakout candidates using your trained AI model.")
@@ -53,16 +52,17 @@ if st.button("🚀 Scan Now"):
                 if len(X_scaled) == 0:
                     continue
 
+                X_scaled = np.array(X_scaled)
+                if X_scaled.ndim == 3:
+                    X_scaled = X_scaled.reshape(X_scaled.shape[0], -1)
+
                 probs = model.predict_proba(X_scaled)
-                if probs.ndim == 2:
-                    prob = float(probs[-1, 1])
-                else:
-                    prob = float(probs[-1])
+                prob = float(probs[-1, 1]) if probs.ndim == 2 else float(probs[-1])
+
+                last_close_val = df_processed["Close"].values.flatten()[-1]
+                last_close = float(last_close_val)
 
                 if prob >= CONFIDENCE_THRESHOLD:
-                    last_close_val = df_processed["Close"].values.flatten()[-1]
-                    last_close = float(last_close_val)
-
                     results.append({
                         "Ticker": ticker,
                         "Breakout Score": round(prob, 4),

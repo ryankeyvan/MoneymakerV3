@@ -2,6 +2,7 @@ import pandas as pd
 import joblib
 import yfinance as yf
 from utils.preprocessing import preprocess_single_stock
+import numpy as np
 import os
 
 # === CONFIG ===
@@ -14,7 +15,6 @@ DEFAULT_TICKERS = [
 ]
 CONFIDENCE_THRESHOLD = 0.60
 
-# === Load Model ===
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError("❌ Model not found. Please train it with train_model.py first.")
 
@@ -40,23 +40,22 @@ for ticker in DEFAULT_TICKERS:
             print(f"⚠️ Skipping {ticker}: No valid features.")
             continue
 
+        X_scaled = np.array(X_scaled)
+        if X_scaled.ndim == 3:
+            X_scaled = X_scaled.reshape(X_scaled.shape[0], -1)
+
         probs = model.predict_proba(X_scaled)
-        if probs.ndim == 2:
-            breakout_score = float(probs[-1, 1])
-        else:
-            breakout_score = float(probs[-1])
+        breakout_score = float(probs[-1, 1]) if probs.ndim == 2 else float(probs[-1])
+
+        last_close = float(df_processed["Close"].values.flatten()[-1])
 
         if breakout_score >= CONFIDENCE_THRESHOLD:
-            last_close_val = df_processed["Close"].values.flatten()[-1]
-            last_close = float(last_close_val)
-
             result = {
                 "Ticker": ticker,
                 "Breakout Score": round(breakout_score, 4),
                 "Last Close": round(last_close, 2)
             }
             results.append(result)
-
             print(f"✅ {ticker}: Score {breakout_score:.2f}")
 
     except Exception as e:
