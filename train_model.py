@@ -1,74 +1,63 @@
+# train_model.py
+
 import yfinance as yf
 import pandas as pd
+import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 import joblib
 import os
 
 # Constants
-TICKER = "AAPL"  # You can swap this with more tickers in the future
+TICKER = "AAPL"
 START_DATE = "2018-01-01"
 END_DATE = "2024-12-31"
-BREAKOUT_THRESHOLD = 0.1  # 10% breakout
-FUTURE_DAYS = 5
+BREAKOUT_THRESHOLD = 0.10  # 10% gain in next 7 days
 
-def label_breakouts(df, future_days=FUTURE_DAYS, threshold=BREAKOUT_THRESHOLD):
-    df = df.copy()
+# Ensure models directory exists
+os.makedirs("models", exist_ok=True)
 
-    if len(df) < future_days + 1:
-        raise ValueError("❌ Not enough data to compute future breakout labels.")
-
-    # Calculate future max
-    df["future_max"] = df["Close"].shift(-1).rolling(window=future_days).max()
-
-    # Drop missing values
-    df = df.dropna(subset=["future_max", "Close"])
-
-    # Compute labels (1 if price jumps 10% above current close)
-    breakout_label = (df["future_max"].values > (df["Close"].values * (1 + threshold))).astype(int)
-    df["label"] = breakout_label
-
-    return df
-
-def compute_features(df):
-    df["momentum"] = df["Close"].pct_change(periods=14)
-    df["volume_avg"] = df["Volume"].rolling(window=14).mean()
-    df["volume_ratio"] = df["Volume"] / df["volume_avg"]
-
-    delta = df["Close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df["rsi"] = 100 - (100 / (1 + rs))
-
-    return df.dropna()
-
-# Step 1: Download Data
+# --- 1. Fetch historical data ---
 print(f"Fetching {TICKER}...")
 df = yf.download(TICKER, start=START_DATE, end=END_DATE)
 
-# Step 2: Label Breakouts
-df = label_breakouts(df, threshold=BREAKOUT_THRESHOLD)
+# --- 2. Feature engineering ---
+df["returns"] = df["Close"].pct_change()
+df["volume_ratio"] = df["Volume"] / df["Volume"].rolling(14).mean()
+df["momentum"] = df["Close"].pct_change(periods=14)
+delta = df["Close"].diff()
+gain = delta.where(delta > 0, 0)
+loss = -delta.where(delta < 0, 0)
+avg_gain = gain.rolling(14).mean()
+avg_loss = loss.rolling(14).mean()
+rs = avg_gain / avg_loss
+df["rsi"] = 100 - (100 / (1 + rs))
 
-# Step 3: Compute Features
-df = compute_features(df)
+# --- 3. Label future breakouts ---
+def label_breakouts(data, threshold=BREAKOUT_THRESHOLD):
+    data = data.copy()
+    data["future_max"] = data["Close"].shift(-1).rolling(7).max()
+    data = data.dropna(subset=["future_max", "Close"])  # Ensure no missing values
+    data["label"] = (data["future_max"] > data["Close"] * (1 + threshold)).astype(int)
+    return data
 
-# Step 4: Prepare Model Data
-features = df[["volume_ratio", "momentum", "rsi"]]
-labels = df["label"]
+df = label_breakouts(df)
 
-# Step 5: Scale and Split
+# --- 4. Drop rows with missing features ---
+df = df.dropna(subset=["volume_ratio", "momentum", "rsi"])
+
+# --- 5. Prepare training data ---
+X = df[["volume_ratio", "momentum", "rsi"]]
+y = df["label"]
+
+# --- 6. Scale and train model ---
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(features)
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, labels, test_size=0.2, random_state=42)
+X_scaled = scaler.fit_transform(X)
 
-# Step 6: Train Model
 model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
+model.fit(X_scaled, y)
 
-# Step 7: Save Model and Scaler
-os.makedirs("models", exist_ok=True)
+# --- 7. Save model and scaler ---
 joblib.dump(model, "models/breakout_model.pkl")
 joblib.dump(scaler, "models/scaler.pkl")
 
