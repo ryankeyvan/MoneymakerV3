@@ -9,10 +9,12 @@ def test_breakout_on_date(ticker, test_date_str):
     test_date = pd.to_datetime(test_date_str)
 
     print(f"📈 Fetching {ticker} data around {test_date_str}...")
-    df = yf.download(ticker, period="1y", interval="1d", auto_adjust=False)
+    df = yf.download(ticker, period="3y", interval="1d", auto_adjust=False)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.dropna()
+
+    print(f"Data date range for {ticker}: {df.index.min().date()} to {df.index.max().date()}")
 
     # Find closest available date on or before test_date
     available_dates = df.index[df.index <= test_date]
