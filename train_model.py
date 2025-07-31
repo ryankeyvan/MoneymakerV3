@@ -8,10 +8,10 @@ import os
 from utils.preprocessing import preprocess_for_training
 
 # === CONFIG ===
-API_KEY = "JMOVPJWW0ZA4ASVW"  # ✅ Your Alpha Vantage API key
+API_KEY = "JMOVPJWW0ZA4ASVW"  # Your real Alpha Vantage API key
 TICKERS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"]
 FUTURE_DAYS = 5
-BREAKOUT_THRESHOLD = 1.10  # 10% price rise = breakout
+BREAKOUT_THRESHOLD = 1.10  # 10% rise = breakout
 
 # Initialize Alpha Vantage API client
 ts = TimeSeries(key=API_KEY, output_format='pandas')
@@ -41,12 +41,12 @@ print("📊 Starting model training...")
 
 for ticker in TICKERS:
     df = fetch_data_alpha(ticker)
-    
+
     if df.empty:
         print(f"⚠️ Skipping {ticker}: No usable data.")
         continue
 
-    # Label future breakout
+    # Create breakout target
     df["future_max"] = df["Close"].rolling(window=FUTURE_DAYS).max().shift(-FUTURE_DAYS)
     df = df.dropna(subset=["future_max", "Close"])
 
@@ -55,8 +55,11 @@ for ticker in TICKERS:
         continue
 
     try:
-        X_scaled, _ = preprocess_for_training(df)
-        y = (df["future_max"].values > df["Close"].values * BREAKOUT_THRESHOLD).astype(int)
+        X_scaled, df_processed = preprocess_for_training(df)
+
+        # Align y with processed features
+        df_processed = df_processed.tail(len(X_scaled))
+        y = (df_processed["future_max"].values > df_processed["Close"].values * BREAKOUT_THRESHOLD).astype(int)
 
         if len(X_scaled) != len(y):
             print(f"❌ Length mismatch for {ticker}")
