@@ -1,71 +1,77 @@
+# scanner.py
+
 import yfinance as yf
-import numpy as np
-import pandas as pd
-from ta.momentum import RSIIndicator
-from utils.sentiment import get_sentiment_score
+from datetime import datetime, timedelta
 from ml_model import predict_breakout
-import concurrent.futures
-
-def scan_single_stock(ticker):
-    try:
-        df = yf.download(ticker, period="3mo", interval="1d", progress=False)
-        if df.empty or len(df) < 14:
-            return None, f"⚠️ {ticker} has insufficient data."
-
-        recent = df.tail(14)
-        current_price = df["Close"].iloc[-1]
-        volume_change = ((recent["Volume"].iloc[-1] - recent["Volume"].mean()) / recent["Volume"].mean()) * 100
-        momentum = ((recent["Close"].iloc[-1] - recent["Close"].iloc[0]) / recent["Close"].iloc[0]) * 100
-        rsi = RSIIndicator(close=recent["Close"]).rsi().iloc[-1]
-        sentiment = get_sentiment_score(ticker)
-        breakout_score = predict_breakout(volume_change, momentum, rsi)
-
-        signal = "🔥 Buy" if breakout_score >= 0.7 else "🧐 Watch"
-
-        result = {
-            "Ticker": ticker,
-            "Current Price": round(current_price, 2),
-            "Breakout Score": round(breakout_score, 3),
-            "RSI": round(rsi, 1),
-            "Momentum (%)": round(momentum, 2),
-            "Volume Change (%)": round(volume_change, 2),
-            "Sentiment": sentiment,
-            "Target Price (1M)": round(current_price * 1.15, 2),
-            "Stop Loss": round(current_price * 0.93, 2),
-            "Signal": signal,
-        }
-
-        return result, f"✅ {ticker} scanned."
-    except Exception as e:
-        return None, f"❌ {ticker} error: {e}"
-
-def scan_stocks(tickers, auto=False, update_progress=None):
-    results = []
-    logs = []
-    total = len(tickers)
-    
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = {executor.submit(scan_single_stock, ticker): ticker for ticker in tickers}
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            result, log = future.result()
-            if result:
-                results.append(result)
-            logs.append(log)
-            if update_progress:
-                update_progress(i / total)
-
-    return results, logs
+import numpy as np
 
 def get_all_stocks_above_5_dollars():
-    # Replace with real dynamic scanner later
-    return [
-        "AAPL", "MSFT", "TSLA", "NVDA", "META", "GOOGL", "AMZN", "NFLX", "AMD", "SHOP",
-        "BA", "CRM", "INTC", "V", "MA", "PYPL", "BABA", "UBER", "DIS", "PLTR",
-        "SNAP", "RIVN", "NIO", "DKNG", "ABNB", "COIN", "T", "WMT", "SBUX", "COST",
-        "ORCL", "SQ", "QCOM", "F", "GM", "CVX", "XOM", "PEP", "KO", "MCD",
-        "PFE", "MRNA", "JNJ", "UNH", "LLY", "VRTX", "BMY", "GILD", "TMO", "ISRG",
-        "ZS", "CRWD", "PANW", "DDOG", "NET", "MDB", "TWLO", "OKTA", "ADBE", "NOW",
-        "VEEV", "ROKU", "TTD", "ETSY", "DOCU", "ZI", "ZM", "BILL", "FSLY", "AFRM",
-        "NEE", "DUK", "SO", "EXC", "D", "AEP", "ED", "PEG", "EIX", "SRE",
-        "AGX", "CREV", "LLHAI", "LIDR", "OCTO", "HTOO", "DASH", "V", "BX", "GS"
-    ]
+    # You can customize this list with a screener in the future
+    return ["AAPL", "TSLA", "NVDA", "MSFT", "GOOGL", "AMZN", "META", "NFLX", "AMD", "INTC"]
+
+def scan_stocks(tickers, update_progress=lambda x: None):
+    results = []
+    logs = []
+
+    for i, ticker in enumerate(tickers):
+        update_progress(i / len(tickers))
+        try:
+            stock = yf.Ticker(ticker)
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=30)
+            df = stock.history(start=start_date, end=end_date)
+
+            if df.empty or len(df) < 14:
+                logs.append(f"⚠️ {ticker} error: Not enough data.")
+                continue
+
+            # Calculate features
+            recent_close = df["Close"].iloc[-1]
+            avg_close = df["Close"].mean()
+            price_momentum = round(recent_close / avg_close, 2)
+
+            recent_volume = df["Volume"].iloc[-1]
+            avg_volume = df["Volume"].mean()
+            volume_ratio = round(recent_volume / avg_volume, 2)
+
+            rsi = compute_rsi(df["Close"].values, window=14)
+
+            if rsi is None:
+                logs.append(f"⚠️ {ticker} error: RSI calculation failed.")
+                continue
+
+            # Predict using ML model (make sure it's single feature vector)
+            breakout_score = predict_breakout(volume_ratio, price_momentum, rsi)
+
+            # Signal logic
+            signal = "🔥 Buy" if breakout_score >= 0.7 else "🧐 Watch"
+
+            results.append({
+                "Ticker": ticker,
+                "Breakout Score": breakout_score,
+                "RSI": round(rsi, 2),
+                "Momentum": price_momentum,
+                "Volume Change": volume_ratio,
+                "Signal": signal
+            })
+
+        except Exception as e:
+            logs.append(f"❌ {ticker} error: {str(e)}")
+
+    update_progress(1.0)
+    return results, logs
+
+def compute_rsi(prices, window=14):
+    try:
+        prices = np.array(prices)
+        if len(prices) < window:
+            return None
+        deltas = np.diff(prices)
+        seed = deltas[:window]
+        up = seed[seed > 0].sum() / window
+        down = -seed[seed < 0].sum() / window
+        rs = up / down if down != 0 else 0
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+    except:
+        return None
