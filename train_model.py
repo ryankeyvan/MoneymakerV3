@@ -1,5 +1,5 @@
-import yfinance as yf
 import pandas as pd
+from alpha_vantage.timeseries import TimeSeries
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -7,22 +7,85 @@ import joblib
 import os
 from utils.preprocessing import preprocess_for_training
 
-# === Config ===
+# === CONFIG ===
+API_KEY = "JMOVPJWW0ZA4ASVW"  # ✅ Your Alpha Vantage API key
 TICKERS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"]
-START_DATE = "2022-01-01"
-END_DATE = "2024-12-31"
 FUTURE_DAYS = 5
-BREAKOUT_THRESHOLD = 1.10  # 10% breakout target
+BREAKOUT_THRESHOLD = 1.10  # 10% price rise = breakout
 
+# Initialize Alpha Vantage API client
+ts = TimeSeries(key=API_KEY, output_format='pandas')
+
+def fetch_data_alpha(ticker):
+    print(f"📈 Fetching {ticker} from Alpha Vantage...")
+    try:
+        data, _ = ts.get_daily(symbol=ticker, outputsize='full')
+        data.rename(columns={
+            '1. open': 'Open',
+            '2. high': 'High',
+            '3. low': 'Low',
+            '4. close': 'Close',
+            '5. volume': 'Volume'
+        }, inplace=True)
+        data = data.sort_index()
+        return data[["Open", "High", "Low", "Close", "Volume"]].dropna()
+    except Exception as e:
+        print(f"❌ Error fetching {ticker}: {e}")
+        return pd.DataFrame()
+
+# === Model training ===
 X_all = []
 y_all = []
 
-print("📊 Starting training process...")
+print("📊 Starting model training...")
 
 for ticker in TICKERS:
-    print(f"\n📈 Fetching {ticker}...")
+    df = fetch_data_alpha(ticker)
+    
+    if df.empty:
+        print(f"⚠️ Skipping {ticker}: No usable data.")
+        continue
+
+    # Label future breakout
+    df["future_max"] = df["Close"].rolling(window=FUTURE_DAYS).max().shift(-FUTURE_DAYS)
+    df = df.dropna(subset=["future_max", "Close"])
+
+    if df.empty:
+        print(f"⚠️ Skipping {ticker}: Not enough labeled data.")
+        continue
 
     try:
-        df = yf.download(ticker, start=START_DATE, end=END_DATE, auto_adjust=False)
+        X_scaled, _ = preprocess_for_training(df)
+        y = (df["future_max"].values > df["Close"].values * BREAKOUT_THRESHOLD).astype(int)
 
-        if df.empty or "Close" not in df.columns
+        if len(X_scaled) != len(y):
+            print(f"❌ Length mismatch for {ticker}")
+            continue
+
+        X_all.extend(X_scaled)
+        y_all.extend(y)
+
+        print(f"✅ {ticker} processed: {len(y)} samples")
+
+    except Exception as e:
+        print(f"❌ Error processing {ticker}: {e}")
+
+# Final model training
+if not X_all:
+    raise RuntimeError("❌ No data available for training.")
+
+print("\n🧠 Training MLP model...")
+X_train, X_test, y_train, y_test = train_test_split(X_all, y_all, test_size=0.2, random_state=42)
+
+model = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=300, random_state=42)
+model.fit(X_train, y_train)
+
+# Save model
+os.makedirs("models", exist_ok=True)
+joblib.dump(model, "models/breakout_model.pkl")
+print("✅ Model saved to models/breakout_model.pkl")
+
+# Evaluate
+y_pred = model.predict(X_test)
+acc = accuracy_score(y_test, y_pred)
+print(f"🎯 Accuracy: {acc * 100:.2f}%")
