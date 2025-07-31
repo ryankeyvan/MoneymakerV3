@@ -18,6 +18,7 @@ if not os.path.exists(MODEL_PATH):
 
 model = joblib.load(MODEL_PATH)
 
+# === Streamlit Setup ===
 st.set_page_config(page_title="MoneyMakerV3", layout="wide")
 st.title("📈 MoneyMakerV3 — Breakout Stock Scanner")
 st.markdown("Scans tickers and ranks breakout candidates using your trained model.")
@@ -25,7 +26,7 @@ st.markdown("Scans tickers and ranks breakout candidates using your trained mode
 if st.button("🚀 Scan Now"):
     results = []
 
-    with st.spinner("Scanning for breakouts using live data..."):
+    with st.spinner("Scanning for breakouts using yfinance live data..."):
         for ticker in TICKERS:
             try:
                 df = yf.download(ticker, period="6mo", interval="1d", auto_adjust=False)
@@ -38,7 +39,12 @@ if st.button("🚀 Scan Now"):
                 if len(X_scaled) == 0:
                     continue
 
-                prob = model.predict_proba(X_scaled)[-1][1]  # Most recent
+                probs = model.predict_proba(X_scaled)
+                if probs.ndim == 2:
+                    prob = float(probs[-1, 1])
+                else:
+                    prob = float(probs[-1])
+
                 if prob >= CONFIDENCE_THRESHOLD:
                     results.append({
                         "Ticker": ticker,
@@ -49,6 +55,7 @@ if st.button("🚀 Scan Now"):
             except Exception as e:
                 st.error(f"{ticker} error: {e}")
 
+    # === Output Results ===
     if results:
         df_out = pd.DataFrame(results).sort_values(by="Breakout Score", ascending=False)
         st.success(f"✅ {len(df_out)} breakout candidates found.")
@@ -58,3 +65,4 @@ if st.button("🚀 Scan Now"):
         st.download_button("📥 Download Watchlist (CSV)", csv, file_name="watchlist.csv")
     else:
         st.warning("❌ No breakouts found today.")
+
