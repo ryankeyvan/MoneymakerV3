@@ -26,11 +26,11 @@ def load_model(fname):
         )
     return pickle.load(open(path, 'rb'))
 
-# ——— load your 3 horizons ———
+# ——— load your 3 horizons using the CORRECT file names ———
 models = {
-    '1w': load_model('breakout_1w.pkl'),
-    '1m': load_model('breakout_1m.pkl'),
-    '3m': load_model('breakout_3m.pkl'),
+    '1w': load_model('breakout_model_1w.pkl'),
+    '1m': load_model('breakout_model_1m.pkl'),
+    '3m': load_model('breakout_model_3m.pkl'),
 }
 
 # ——— thresholds.json ———
