@@ -6,11 +6,11 @@ from tqdm import tqdm
 import pickle
 import json
 
-# Load trained models
+# --- Load trained models (correct filenames) ---
 models = {
-    '1w': pickle.load(open('models/breakout_model_1w.pkl', 'rb')),
-    '1m': pickle.load(open('models/breakout_model_1m.pkl', 'rb')),
-    '3m': pickle.load(open('models/breakout_model_3m.pkl', 'rb'))
+    '1w': pickle.load(open('models/breakout_1w.pkl', 'rb')),
+    '1m': pickle.load(open('models/breakout_1m.pkl', 'rb')),
+    '3m': pickle.load(open('models/breakout_3m.pkl', 'rb')),
 }
 
 # Load saved thresholds for each horizon
@@ -21,24 +21,21 @@ with open('models/thresholds.json', 'r') as f:
 
 def get_sp500_tickers():
     """
-    Fetches the list of S&P 500 tickers from Wikipedia and remaps tickers
+    Fetches the list of S&P 500 tickers from Wikipedia and remaps tickers
     like 'BRK.B' -> 'BRK-B' for Yahoo Finance compatibility.
     """
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
     table = pd.read_html(url, header=0)[0]
     tickers = table['Symbol'].tolist()
-    # remap any tickers containing a dot to use a hyphen
     tickers = [t.replace('.', '-') for t in tickers]
     return tickers
 
 
 def extract_features(df):
     """
-    Recreate the feature-extraction logic from train_model.py.
-    Here we just grab the latest OHLCV row, but you can expand
-    this to include TA indicators etc.
+    Grab the latest OHLC row (4 features) to match training.
     """
-    row = df[['Open', 'High', 'Low', 'Close', 'Volume']].iloc[-1]
+    row = df[['Open', 'High', 'Low', 'Close']].iloc[-1]
     return row.values
 
 
@@ -65,9 +62,19 @@ def scan_tickers(tickers):
     errors = []
     for ticker in tqdm(tickers, desc=f"Scanning {len(tickers)} tickers…"):
         try:
-            df = yf.download(ticker, period='6mo', interval='1d', progress=False)
+            df = yf.download(
+                ticker,
+                period='6mo',
+                interval='1d',
+                auto_adjust=False,   # disable auto_adjust to preserve raw OHLC
+                progress=False
+            )
             if df.empty:
                 raise ValueError("No data fetched")
+
+            # trim to only OHLC so extract_features returns 4 values
+            df = df[['Open', 'High', 'Low', 'Close']]
+
             current = df['Close'].iloc[-1]
             feats = extract_features(df)
 
@@ -80,19 +87,21 @@ def scan_tickers(tickers):
             for h, model in models.items():
                 prob = model.predict_proba([feats])[0][1]
                 decision = 'BUY' if prob >= thresholds[h] else 'HOLD'
-                record[f'score_{h}'] = round(prob, 4)
+                record[f'score_{h}']    = round(prob, 4)
                 record[f'decision_{h}'] = decision
-                record[f'target_{h}'] = calculate_target_price(current, thresholds[h])
+                record[f'target_{h}']   = calculate_target_price(current, thresholds[h])
             results.append(record)
+
         except Exception as e:
-            errors.append({ 'ticker': ticker, 'error': str(e) })
+            errors.append({'ticker': ticker, 'error': str(e)})
+
     # filter to only those the model wants you to BUY in 1-month horizon
     buys = [r for r in results if r['decision_1m'] == 'BUY']
     return buys, errors
 
 
 if __name__ == '__main__':
-    # parse tickers from command line, or default to S&P 500
+    # parse tickers from command line, or default to S&P 500
     if len(sys.argv) > 1:
         tickers = sys.argv[1:]
     else:
