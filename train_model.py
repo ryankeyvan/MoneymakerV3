@@ -1,89 +1,110 @@
 import yfinance as yf
 import numpy as np
 import pandas as pd
-from sklearn.neural_network import MLPClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score
 import pickle
-import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
-# 1) Tickers for training
-TICKERS = [
-    "AAPL","MSFT","NVDA","GOOG","AMZN",
-    "TSLA","META","NFLX","IBM","ORCL",
-    # …add more symbols to improve coverage
-]
+# Load trained breakout model
+MODEL_PATH = "models/breakout_model.pkl"
+with open(MODEL_PATH, "rb") as f:
+    model = pickle.load(f)
 
-# Fetch historical prices
-def fetch_data(ticker, period="1y", interval="1d"):
-    return yf.download(ticker, period=period, interval=interval, progress=False)
+# Tuned F1 threshold from train_model.py output
+F1_THRESHOLD = 0.180
 
-# Build features and labels
-def compute_features_and_labels(df, lookahead=5, breakout_pct=0.10):
-    closes = df['Close']
+# Simple in-memory cache for historical data
+data_cache = {}
+
+
+def get_stock_data(ticker, period="6mo", interval="1d"):
+    """
+    Fetches historical data for a given ticker, with caching to reduce API calls.
+    """
+    key = f"{ticker}_{period}_{interval}"
+    if key in data_cache:
+        return data_cache[key]
+    df = yf.download(ticker, period=period, interval=interval, progress=False)
+    data_cache[key] = df
+    return df
+
+
+def compute_features(df):
+    """
+    Compute feature vector for model prediction.
+    """
+    closes = df["Close"]
     returns = closes.pct_change().fillna(0)
-    vol = df['Volume']
-    feats, labs = [], []
-    for i in range(20, len(df) - lookahead):
-        window = returns.iloc[i-20:i]
-        feat = [
-            returns.iloc[i],                   # last-day return
-            window[-5:].mean(),                # 5-day avg return
-            window.std(),                      # 20-day volatility
-            vol.iloc[i] / vol.iloc[i-5:i].mean()  # volume spike ratio
-        ]
-        future_max = (closes.iloc[i+1:i+1+lookahead] / closes.iloc[i] - 1).max()
-        label = int(future_max >= breakout_pct)
-        feats.append(feat)
-        labs.append(label)
-    return np.array(feats), np.array(labs)
+    return np.array([
+        returns.iloc[-1],                    # last-day return
+        returns.iloc[-5:].mean(),            # 5-day avg return
+        returns.iloc[-20:].std(),            # 20-day volatility
+        df["Volume"].iloc[-1] / df["Volume"].iloc[-5:].mean()  # volume spike ratio
+    ])
 
-# Collect all feature sets
-total_feats, total_labels = [], []
-for t in TICKERS:
-    df = fetch_data(t)
-    if df is None or df.empty:
-        print(f"⚠️  No data for {t}, skipping")
-        continue
-    X_t, y_t = compute_features_and_labels(df)
-    total_feats.append(X_t)
-    total_labels.append(y_t)
 
-# Stack into final arrays
-X = np.vstack(total_feats)
-y = np.concatenate(total_labels)
+def scan_single_stock(ticker):
+    """
+    Scans a single ticker for breakout signal.
+    """
+    try:
+        df = get_stock_data(ticker)
+        if df is None or df.empty:
+            return {"ticker": ticker, "error": "No data fetched"}
 
-# Ensure X is 2D
-if X.ndim > 2:
-    X = X.reshape(X.shape[0], -1)
+        # Handle multi-index columns (if yfinance downloaded multiple tickers)
+        if isinstance(df.columns, pd.MultiIndex):
+            if ticker in df.columns.get_level_values(0):
+                df = df[ticker]
+            else:
+                return {"ticker": ticker, "error": f"{ticker} not found in downloaded data"}
 
-# Train-test split
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
+        # Extract last closing price as float
+        last_price = float(df["Close"].iloc[-1])
 
-# Initialize and train model
-model = MLPClassifier(
-    hidden_layer_sizes=(50, 25),
-    activation='relu',
-    solver='adam',
-    max_iter=500,
-    random_state=42
-)
-model.fit(X_train, y_train)
+        # Compute features and predict probability
+        feat = compute_features(df).reshape(1, -1)
+        proba = model.predict_proba(feat)[0][1]
 
-# Evaluate and find best F1 threshold
-probs = model.predict_proba(X_test)[:, 1]
-best_thresh, best_f1 = 0.0, 0.0
-for thr in np.linspace(0, 1, 101):
-    preds = (probs >= thr).astype(int)
-    f1 = f1_score(y_test, preds)
-    if f1 > best_f1:
-        best_f1, best_thresh = f1, thr
-print(f"🔍 Best validation F1 = {best_f1:.4f} at threshold = {best_thresh:.3f}")
+        return {
+            "ticker": ticker,
+            "score": round(float(proba), 4),
+            "decision": "BUY" if proba >= F1_THRESHOLD else "HOLD",
+            "current_price": round(last_price, 2),
+            "target_price": round(last_price * 1.10, 2),
+            "stop_loss": round(last_price * 0.95, 2)
+        }
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
 
-# Save binary model
-os.makedirs("models", exist_ok=True)
-with open("models/breakout_model.pkl", "wb") as f:
-    pickle.dump(model, f)
-print("✅ Model saved to models/breakout_model.pkl")
+
+def scan_tickers(tickers, max_workers=8):
+    """
+    Scans a list of tickers in parallel.
+    """
+    results, failures = [], []
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(scan_single_stock, t): t for t in tickers}
+        for fut in tqdm(as_completed(futures), total=len(tickers), desc="Scanning"):
+            res = fut.result()
+            (failures if "error" in res else results).append(res)
+    return results, failures
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python scanner.py TICKER1 TICKER2 …")
+        sys.exit(1)
+
+    tickers = sys.argv[1:]
+    print(f"Starting scan of {len(tickers)} tickers… threshold={F1_THRESHOLD}\n")
+    results, errors = scan_tickers(tickers)
+
+    print("\n=== RESULTS ===")
+    for r in results:
+        print(r)
+    if errors:
+        print("\n=== ERRORS ===")
+        for e in errors:
+            print(e)
