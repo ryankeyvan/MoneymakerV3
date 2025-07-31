@@ -20,27 +20,43 @@ def run_breakout_scan(ticker_list):
 
             recent_data = data.tail(14)
 
-            # ✅ Check that recent_data has valid volume and price
-            if recent_data["Volume"].mean().item() == 0 or recent_data["Close"].iloc[0].item() == 0:
-                st.write(f"⚠️ Invalid price or volume data for {ticker}")
+            # Get closing and volume series
+            close_series = recent_data["Close"]
+            volume_series = recent_data["Volume"]
+
+            if close_series.isnull().any() or volume_series.isnull().any():
+                st.write(f"⚠️ Missing data in {ticker}")
                 continue
 
-            volume_ratio = recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean()
-            price_momentum = recent_data["Close"].iloc[-1] / recent_data["Close"].iloc[0]
-            rsi_numerator = recent_data["Close"].pct_change().mean()
-            rsi_denominator = recent_data["Close"].pct_change().std()
+            if close_series.iloc[0] == 0 or volume_series.mean() == 0:
+                st.write(f"⚠️ Invalid values in {ticker}")
+                continue
+
+            # Feature calculations
+            volume_ratio = volume_series.iloc[-1] / volume_series.mean()
+            price_momentum = close_series.iloc[-1] / close_series.iloc[0]
+            pct_change = close_series.pct_change()
+            rsi_numerator = pct_change.mean()
+            rsi_denominator = pct_change.std()
             rsi = 100 - (100 / (1 + (rsi_numerator / rsi_denominator))) if rsi_denominator != 0 else 50
 
             sentiment = get_sentiment_score(ticker)
             breakout_score = predict_breakout(volume_ratio, price_momentum, rsi)
 
-            last_close = float(recent_data["Close"].iloc[-1])
-
+            last_close = float(close_series.iloc[-1])
             signal = "🔥 Buy" if breakout_score >= 0.7 else "🧪 Watch"
             target_price = round(last_close * 1.15, 2) if breakout_score >= 0.7 else "N/A"
             stop_loss = round(last_close * 0.93, 2) if breakout_score >= 0.7 else "N/A"
 
-            st.write(f"{ticker}: Breakout Score={breakout_score:.2f}, Close=${last_close:.2f}, Sentiment={sentiment}")
+            st.markdown(f"""
+                ### 📊 {ticker} — {signal}
+                - **Breakout Score:** `{breakout_score:.2f}`
+                - **Price:** `${last_close:.2f}`
+                - **Target (1M):** `{target_price}`
+                - **Stop Loss:** `{stop_loss}`
+                - **Sentiment:** `{sentiment}`
+                ---
+            """)
 
             results.append({
                 "Ticker": ticker,
