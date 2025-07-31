@@ -6,6 +6,7 @@ from utils.charting import plot_stock_chart
 st.set_page_config(page_title="Money Maker", layout="wide")
 st.title("💸 Money Maker – AI Stock Breakout Assistant")
 
+# Load watchlist
 watchlist = pd.read_csv("watchlist.csv")
 tickers = watchlist["Ticker"].tolist()
 
@@ -14,7 +15,9 @@ run_scan = st.sidebar.button("Run Breakout Scan")
 
 if run_scan:
     st.write("🔄 Scanning...")
+    st.write(f"Scanning {len(tickers)} tickers...")
     results = run_breakout_scan(tickers)
+    st.write(f"Scan complete. Found {len(results)} results.")
 
     for result in results:
         ticker = result["Ticker"]

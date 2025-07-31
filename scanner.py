@@ -1,15 +1,18 @@
 import yfinance as yf
+import pandas as pd
 from utils.sentiment import get_sentiment_score
 from ml_model import predict_breakout
-import pandas as pd
+import streamlit as st
 
 def run_breakout_scan(ticker_list):
     results = []
 
     for ticker in ticker_list:
+        st.write(f"⏳ Scanning {ticker}...")  # Show which ticker is being scanned
         try:
             data = yf.download(ticker, period="3mo", interval="1d", progress=False)
             if data.empty:
+                st.write(f"⚠️ No data for {ticker}")
                 continue
 
             recent_data = data.tail(14)
@@ -31,6 +34,6 @@ def run_breakout_scan(ticker_list):
                 })
 
         except Exception as e:
-            print(f"Error with {ticker}: {e}")
+            st.write(f"❌ Error with {ticker}: {e}")
 
     return results
