@@ -1,14 +1,24 @@
+# ml_model.py
+
 import numpy as np
+import joblib
+import os
 
-def predict_breakout(features_scaled):
-    """
-    Simulate breakout prediction using a weighted formula.
-    Replace with your trained ML model if available.
-    """
+# Load trained model and scaler
+model_path = "models/breakout_model.pkl"
+scaler_path = "models/scaler.pkl"
 
-    # Assuming features_scaled shape: (1, 5) → [rsi, macd, obv, momentum, volume_change]
-    weights = np.array([0.15, 0.2, 0.1, 0.25, 0.3])  # Sum to 1
-    score = np.dot(features_scaled[0], weights)
+if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+    raise FileNotFoundError("❌ Trained model or scaler not found. Run train_model.py first.")
 
-    # Ensure it's between 0 and 1
-    return max(0.0, min(1.0, score))
+model = joblib.load(model_path)
+scaler = joblib.load(scaler_path)
+
+def predict_breakout(volume_ratio, momentum, rsi):
+    # Prepare and scale the input features
+    X = np.array([[volume_ratio, momentum, rsi]])
+    X_scaled = scaler.transform(X)
+
+    # Predict probability of breakout
+    prob = model.predict_proba(X_scaled)[0][1]  # probability of breakout (class = 1)
+    return round(prob, 3)  # keep 3 decimals for clarity
