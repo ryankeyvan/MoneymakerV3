@@ -1,8 +1,7 @@
 import pandas as pd
 import joblib
 import yfinance as yf
-from utils.preprocessing import preprocess_single_stock
-import numpy as np
+from utils.preprocessing import preprocess_single_stock, ensure_2d_array, safe_scalar_from_series
 import os
 
 # === CONFIG ===
@@ -40,14 +39,12 @@ for ticker in DEFAULT_TICKERS:
             print(f"⚠️ Skipping {ticker}: No valid features.")
             continue
 
-        X_scaled = np.array(X_scaled)
-        if X_scaled.ndim == 3:
-            X_scaled = X_scaled.reshape(X_scaled.shape[0], -1)
+        X_scaled = ensure_2d_array(X_scaled)
 
         probs = model.predict_proba(X_scaled)
         breakout_score = float(probs[-1, 1]) if probs.ndim == 2 else float(probs[-1])
 
-        last_close = float(df_processed["Close"].values.flatten()[-1])
+        last_close = safe_scalar_from_series(df_processed["Close"])
 
         if breakout_score >= CONFIDENCE_THRESHOLD:
             result = {

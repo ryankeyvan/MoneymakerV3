@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import joblib
-from utils.preprocessing import preprocess_single_stock
-import numpy as np
+from utils.preprocessing import preprocess_single_stock, ensure_2d_array, safe_scalar_from_series
 import os
 
 # === CONFIG ===
@@ -52,15 +51,12 @@ if st.button("🚀 Scan Now"):
                 if len(X_scaled) == 0:
                     continue
 
-                X_scaled = np.array(X_scaled)
-                if X_scaled.ndim == 3:
-                    X_scaled = X_scaled.reshape(X_scaled.shape[0], -1)
+                X_scaled = ensure_2d_array(X_scaled)
 
                 probs = model.predict_proba(X_scaled)
                 prob = float(probs[-1, 1]) if probs.ndim == 2 else float(probs[-1])
 
-                last_close_val = df_processed["Close"].values.flatten()[-1]
-                last_close = float(last_close_val)
+                last_close = safe_scalar_from_series(df_processed["Close"])
 
                 if prob >= CONFIDENCE_THRESHOLD:
                     results.append({

@@ -52,15 +52,27 @@ def get_feature_columns():
         "price_above_ema20", "price_above_ema50", "price_above_bbm"
     ]
 
+def ensure_2d_array(X):
+    X = np.array(X)
+    if X.ndim == 3:
+        X = X.reshape(X.shape[0], -1)
+    elif X.ndim == 1:
+        X = X.reshape(-1, 1)
+    return X
+
+def safe_scalar_from_series(series):
+    # Extracts a scalar float from a pandas Series/array safely
+    arr = series.values.flatten()
+    return float(arr[-1])
+
 def preprocess_for_training(df: pd.DataFrame):
     df = generate_features(df)
     features = df[get_feature_columns()]
 
-    # Scale features
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(features)
+    X_scaled = ensure_2d_array(X_scaled)
 
-    # Save scaler for later prediction
     os.makedirs("models", exist_ok=True)
     joblib.dump(scaler, SCALER_PATH)
 
@@ -72,5 +84,6 @@ def preprocess_single_stock(df: pd.DataFrame):
 
     scaler = joblib.load(SCALER_PATH)
     X_scaled = scaler.transform(features)
+    X_scaled = ensure_2d_array(X_scaled)
 
     return X_scaled, df.tail(len(X_scaled))
