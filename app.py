@@ -82,9 +82,37 @@ elif mode == "Auto Scan ($5+)":
             "BA", "CCL", "DAL", "UAL", "BIDU", "JD", "PDD", "TSM", "ADBE", "Z", "ZIM", "TTD"
         ]
 
-        results = scan_stocks(watchlist)
-        filtered = [r for r in results if isinstance(r.get("Target Price"), (int, float)) and r.get("Target Price", 0) > 5]
-        top_10 = sorted(filtered, key=lambda x: x["Breakout Score"], reverse=True)[:10]
+       results = scan_stocks(watchlist)
+
+# Use breakout score to sort even if Target Price is missing
+top_10 = sorted(results, key=lambda x: x.get("Breakout Score", 0), reverse=True)[:10]
+
+if not top_10:
+    st.warning("⚠️ No valid breakout stocks found at the moment. Try again later.")
+else:
+    st.success("✅ Showing Top 10 Stocks with Highest Breakout Score:")
+    for result in top_10:
+        st.subheader(f"📊 {result.get('Ticker', 'Unknown')}")
+
+        price = result.get("Current Price")
+        st.markdown(f"💰 **Current Price:** `${price:.2f}`" if isinstance(price, (int, float)) else "💰 **Current Price:** N/A")
+
+        st.markdown(f"- **Breakout Score:** `{result.get('Breakout Score', 'N/A')}`")
+        st.markdown(f"- **Volume Ratio:** `{result.get('Volume Ratio', 'N/A')}`")
+        st.markdown(f"- **Momentum:** `{result.get('Momentum', 'N/A')}`")
+        st.markdown(f"- **RSI:** `{result.get('RSI', 'N/A')}`")
+        st.markdown(f"- **Sentiment:** `{result.get('Sentiment', 'N/A')}`")
+
+        tp = result.get("Target Price")
+        st.markdown(f"🟢 **Target Price (1M):** `${tp:.2f}`" if isinstance(tp, (int, float)) else "🟡 **Target Price (1M):** N/A")
+
+        sl = result.get("Stop Loss")
+        st.markdown(f"🔴 **Stop Loss:** `${sl:.2f}`" if isinstance(sl, (int, float)) else "🟡 **Stop Loss:** N/A")
+
+        if result.get("Buy Signal"):
+            st.success("🔥 **Buy Signal Triggered!**")
+
+        st.markdown("---")
 
         st.success("✅ Showing Top 10 Stocks with Highest Breakout Score:")
         for result in top_10:
