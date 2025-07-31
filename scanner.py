@@ -29,27 +29,28 @@ def scan_stocks(tickers=None, auto=False):
     for ticker in tickers:
         try:
             time.sleep(0.5)
+            print(f"📡 Scanning {ticker}")
             data = yf.download(ticker, period="3mo", interval="1d", progress=False)
             if data.empty or len(data) < 14:
+                print(f"⚠️ Skipping {ticker}: not enough data")
                 continue
 
-            close_prices = data["Close"]
-            volumes = data["Volume"]
             recent_data = data.tail(14)
-
-            # Technical indicators
             rsi = RSIIndicator(close=recent_data["Close"]).rsi().iloc[-1]
             momentum = recent_data["Close"].iloc[-1] / recent_data["Close"].iloc[0] - 1
             volume_change = (recent_data["Volume"].iloc[-1] - recent_data["Volume"].mean()) / recent_data["Volume"].mean() * 100
             current_price = recent_data["Close"].iloc[-1]
 
-            # AI sentiment and breakout score
             sentiment_score = get_sentiment_score(ticker)
             breakout_score = predict_breakout(
                 volume_ratio=recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean(),
                 price_momentum=momentum + 1,
                 rsi=rsi
             )
+
+            if np.isnan(breakout_score):
+                print(f"⚠️ {ticker} returned invalid breakout score")
+                continue
 
             result = {
                 "Ticker": ticker,
@@ -63,10 +64,12 @@ def scan_stocks(tickers=None, auto=False):
                 "Sentiment Score": sentiment_score
             }
 
+            print(f"✅ Added {ticker}: {result}")
             results.append(result)
 
         except Exception as e:
-            print(f"❌ Error with {ticker}: {e}")
+            print(f"❌ Error scanning {ticker}: {e}")
             continue
 
+    print("🔎 TOTAL STOCKS FOUND:", len(results))
     return results
