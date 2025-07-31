@@ -35,5 +35,5 @@ def run_breakout_scan(ticker_list):
 
         except Exception as e:
             st.write(f"❌ Error with {ticker}: {e}")
-
+# Forced update to refresh Streamlit
     return results
