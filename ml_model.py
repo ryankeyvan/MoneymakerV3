@@ -2,9 +2,9 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-# Pre-trained-like dummy model for demo
+# Pre-trained-like dummy model for breakout prediction
 def predict_breakout(volume_ratio, price_momentum, rsi):
-    # Training dataset (dummy examples)
+    # Dummy training data
     X_train = np.array([
         [1.2, 1.05, 55],
         [2.0, 1.20, 60],
@@ -14,18 +14,19 @@ def predict_breakout(volume_ratio, price_momentum, rsi):
         [0.9, 0.95, 40],
         [1.0, 1.0, 50]
     ])
-    y_train = [1, 1, 0, 1, 1, 0, 0]
+    y_train = [1, 1, 0, 1, 1, 0, 0]  # 1 = breakout, 0 = no breakout
 
-    # Scale
+    # Scale the training data
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_train)
 
-    # Train SVM
+    # Train SVM classifier
     model = SVC(kernel="rbf", probability=True)
     model.fit(X_scaled, y_train)
 
-    # Predict
+    # Predict probability on the input
     X_input = np.array([[volume_ratio, price_momentum, rsi]])
     X_input_scaled = scaler.transform(X_input)
-    prob = model.predict_proba(X_input_scaled)[0][1]  # breakout prob
-    return round(float(prob), 2)
+    probability = model.predict_proba(X_input_scaled)[0][1]  # breakout prob
+
+    return round(float(probability), 2)
