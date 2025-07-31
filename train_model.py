@@ -1,30 +1,44 @@
-# train_model.py
-
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.neural_network import MLPClassifier
+from sklearn.model_selection import train_test_split
 import joblib
 
-# Simulated historical data (replace with real CSV if available)
-data = pd.DataFrame({
-    "volume_ratio": [1.2, 2.0, 0.8, 1.5, 2.5, 0.9, 1.0, 1.6, 2.1, 0.95],
-    "price_momentum": [1.05, 1.2, 0.97, 1.15, 1.3, 0.95, 1.0, 1.18, 1.22, 0.98],
-    "rsi": [55, 60, 45, 58, 70, 40, 50, 62, 65, 48],
-    "breakout": [1, 1, 0, 1, 1, 0, 0, 1, 1, 0]
-})
+# === 1. Create synthetic historical-like breakout dataset ===
+# Features: [volume_ratio, price_momentum, rsi]
+# Target: 1 = breakout, 0 = no breakout
+data = {
+    "volume_ratio": np.random.normal(loc=1.5, scale=0.5, size=1000),
+    "price_momentum": np.random.normal(loc=1.1, scale=0.15, size=1000),
+    "rsi": np.random.normal(loc=55, scale=10, size=1000),
+}
 
-X = data[["volume_ratio", "price_momentum", "rsi"]]
-y = data["breakout"]
+df = pd.DataFrame(data)
 
+# Simulate labels: higher volume + high momentum + RSI ~ breakout
+df["target"] = (
+    (df["volume_ratio"] > 1.4)
+    & (df["price_momentum"] > 1.05)
+    & (df["rsi"] > 50)
+).astype(int)
+
+# === 2. Train-test split ===
+X = df[["volume_ratio", "price_momentum", "rsi"]]
+y = df["target"]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# === 3. Scale ===
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+X_train_scaled = scaler.fit_transform(X_train)
 
-model = MLPClassifier(hidden_layer_sizes=(10,), max_iter=1000, random_state=42)
-model.fit(X_scaled, y)
+# === 4. Train model ===
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train_scaled, y_train)
 
-joblib.dump(model, "breakout_model.pkl")
+# === 5. Save model and scaler ===
+joblib.dump(model, "model.pkl")
 joblib.dump(scaler, "scaler.pkl")
 
 print("✅ Model and scaler saved!")
