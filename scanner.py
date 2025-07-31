@@ -3,81 +3,87 @@ import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.trend import MACD
 from ta.volume import OnBalanceVolumeIndicator
-from datetime import datetime, timedelta
+from sklearn.preprocessing import MinMaxScaler
+from model import predict_breakout
+import datetime
 import numpy as np
+import concurrent.futures
 
-def calculate_indicators(df):
-    df = df.copy()
-    df['RSI'] = RSIIndicator(close=df['Close'], window=14).rsi()
-    df['Momentum'] = df['Close'].pct_change(periods=14) * 100
-    df['Volume_Change'] = df['Volume'].pct_change(periods=3) * 100
-    df['OBV'] = OnBalanceVolumeIndicator(close=df['Close'], volume=df['Volume']).on_balance_volume()
-    return df
+# Time range for historical data
+END_DATE = datetime.datetime.now()
+START_DATE = END_DATE - datetime.timedelta(days=90)
 
-def score_breakout(df):
-    latest = df.iloc[-1]
-    score = 0
-    if 50 < latest['RSI'] < 70:
-        score += 1
-    if latest['Momentum'] > 0:
-        score += 1
-    if latest['Volume_Change'] > 0:
-        score += 1
-    if latest['OBV'] > df['OBV'].mean():
-        score += 1
-    return round(score * 0.25, 2)  # 0–1 scale
+# Scan a single stock
+def scan_single_stock(ticker):
+    try:
+        df = yf.download(ticker, start=START_DATE, end=END_DATE, progress=False)
+        if df.empty or 'Close' not in df.columns:
+            raise ValueError("No price data")
 
-def project_1m_price(df):
-    recent_growth = df['Close'].pct_change().rolling(window=5).mean().iloc[-1]
-    projected = df['Close'].iloc[-1] * (1 + (recent_growth * 21))  # ~21 trading days
-    return round(projected, 2)
+        df.dropna(inplace=True)
+        close = df['Close'].values  # Get numpy array
+        volume = df['Volume'].values
 
-def scan_stocks(tickers, auto=False, update_progress=None, st_log=None):
+        if len(close) < 15 or len(volume) < 15:
+            raise ValueError("Not enough data")
+
+        rsi = RSIIndicator(close=pd.Series(close.flatten())).rsi().values[-1]
+        macd = MACD(close=pd.Series(close.flatten())).macd_diff().values[-1]
+        obv = OnBalanceVolumeIndicator(close=pd.Series(close.flatten()), volume=pd.Series(volume.flatten())).on_balance_volume().values[-1]
+
+        momentum = ((close[-1] - close[-15]) / close[-15]) * 100
+        volume_change = ((volume[-1] - np.mean(volume[-15:])) / np.mean(volume[-15:])) * 100
+
+        features = pd.DataFrame([{
+            "rsi": rsi,
+            "macd": macd,
+            "obv": obv,
+            "momentum": momentum,
+            "volume_change": volume_change
+        }])
+
+        scaled = MinMaxScaler().fit_transform(features)
+        score = predict_breakout(scaled)
+
+        return {
+            "Ticker": ticker,
+            "Breakout Score": round(float(score), 3),
+            "RSI": round(rsi, 2),
+            "Momentum": round(momentum, 2),
+            "Volume Change": round(volume_change, 2),
+            "Current Price": round(float(close[-1]), 2),
+            "Signal": "🔥 Buy" if score >= 0.7 else "🧐 Watch"
+        }
+
+    except Exception as e:
+        return {"Ticker": ticker, "Error": str(e)}
+
+# Multi-threaded scanner
+def scan_stocks(tickers, update_progress=None):
     results = []
     logs = []
     total = len(tickers)
 
-    for i, ticker in enumerate(tickers):
-        try:
-            data = yf.download(ticker, period="3mo", interval="1d", progress=False)
-            if data.empty or len(data) < 20:
-                msg = f"⚠️ No data for {ticker}"
-                if st_log: st_log.write(msg)
-                logs.append(msg)
-                continue
-
-            df = calculate_indicators(data.dropna())
-            if df.empty:
-                msg = f"⚠️ Insufficient data after indicator calc for {ticker}"
-                if st_log: st_log.write(msg)
-                logs.append(msg)
-                continue
-
-            score = score_breakout(df)
-            current_price = round(df['Close'].iloc[-1], 2)
-            target_price = project_1m_price(df)
-            stop_loss = round(current_price * 0.93, 2)
-
-            result = {
-                "Ticker": ticker,
-                "Current Price": current_price,
-                "Breakout Score": score,
-                "Projected 1M Price": target_price,
-                "Stop Loss": stop_loss,
-                "Signal": "🔥 Buy" if score >= 0.7 else "🧐 Watch"
-            }
-            results.append(result)
-
-        except Exception as e:
-            msg = f"❌ {ticker} error: {e}"
-            if st_log: st_log.write(msg)
-            logs.append(msg)
-
-        if update_progress:
-            update_progress((i + 1) / total)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(scan_single_stock, ticker) for ticker in tickers]
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            result = future.result()
+            if "Error" in result:
+                logs.append(f"❌ {result['Ticker']} error: {result['Error']}")
+            else:
+                results.append(result)
+            if update_progress:
+                update_progress((i + 1) / total)
 
     return results, logs
 
+# Load a list of popular stocks (>$5)
 def get_all_stocks_above_5_dollars():
-    # Placeholder — replace with your source of 100+ tickers over $5
-    return ["AAPL", "TSLA", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "NFLX", "AMD", "INTC", "BA", "JPM", "V", "DIS", "UBER", "LYFT", "PLTR", "SOFI", "SNAP", "SHOP", "COIN"]
+    return [
+        "AAPL", "MSFT", "TSLA", "GOOGL", "AMZN", "META", "NVDA", "NFLX",
+        "INTC", "AMD", "BA", "JPM", "V", "MA", "DIS", "UBER", "LYFT", "PLTR",
+        "SQ", "PYPL", "CRM", "SHOP", "ABNB", "COIN", "ROKU", "NKE", "TGT",
+        "COST", "WMT", "PFE", "MRNA", "BNTX", "XOM", "CVX", "F", "GM", "RIVN",
+        "LCID", "UAL", "DAL", "AAL", "SBUX", "QCOM", "ZM", "DDOG", "SNOW", "NET",
+        "TWLO", "DOCU", "SOFI", "ENPH", "SPWR", "FSLR"
+    ]
