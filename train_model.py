@@ -1,44 +1,73 @@
+import yfinance as yf
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
 import joblib
+import os
 
-# === 1. Create synthetic historical-like breakout dataset ===
-# Features: [volume_ratio, price_momentum, rsi]
-# Target: 1 = breakout, 0 = no breakout
-data = {
-    "volume_ratio": np.random.normal(loc=1.5, scale=0.5, size=1000),
-    "price_momentum": np.random.normal(loc=1.1, scale=0.15, size=1000),
-    "rsi": np.random.normal(loc=55, scale=10, size=1000),
-}
+# -------------------------
+# Config
+# -------------------------
+TICKER = "AAPL"
+START_DATE = "2019-01-01"
+END_DATE = "2024-01-01"
+BREAKOUT_THRESHOLD = 0.1  # 10% gain = breakout
 
-df = pd.DataFrame(data)
+# -------------------------
+# Feature Engineering
+# -------------------------
+def compute_features(df):
+    df = df.copy()
+    df["Volume_Ratio"] = df["Volume"] / df["Volume"].rolling(window=14).mean()
+    df["Momentum"] = df["Close"].pct_change(periods=14)
+    delta = df["Close"].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+    rs = avg_gain / avg_loss
+    df["RSI"] = 100 - (100 / (1 + rs))
+    df.dropna(inplace=True)
+    return df
 
-# Simulate labels: higher volume + high momentum + RSI ~ breakout
-df["target"] = (
-    (df["volume_ratio"] > 1.4)
-    & (df["price_momentum"] > 1.05)
-    & (df["rsi"] > 50)
-).astype(int)
+# -------------------------
+# Labeling: Breakout or Not
+# -------------------------
+def label_breakouts(df, future_days=5, threshold=0.1):
+    df = df.copy()
+    df["future_max"] = df["Close"].rolling(window=future_days).max().shift(-future_days)
 
-# === 2. Train-test split ===
-X = df[["volume_ratio", "price_momentum", "rsi"]]
-y = df["target"]
+    # Align before comparing
+    future_max = df["future_max"].copy()
+    close_shifted = df["Close"] * (1 + threshold)
+    close_shifted.index = future_max.index
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    df["label"] = (future_max > close_shifted).astype(int)
+    df.dropna(inplace=True)
+    return df
 
-# === 3. Scale ===
+# -------------------------
+# Training Pipeline
+# -------------------------
+print(f"Fetching {TICKER}...")
+df = yf.download(TICKER, start=START_DATE, end=END_DATE)
+df = compute_features(df)
+df = label_breakouts(df, threshold=BREAKOUT_THRESHOLD)
+
+# Features and target
+X = df[["Volume_Ratio", "Momentum", "RSI"]]
+y = df["label"]
+
+# Scaling
 scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
+X_scaled = scaler.fit_transform(X)
 
-# === 4. Train model ===
-model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X_train_scaled, y_train)
+# Model
+model = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=1000, random_state=42)
+model.fit(X_scaled, y)
 
-# === 5. Save model and scaler ===
+# Save
 joblib.dump(model, "model.pkl")
 joblib.dump(scaler, "scaler.pkl")
-
 print("✅ Model and scaler saved!")
