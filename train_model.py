@@ -39,13 +39,13 @@ def compute_features(df):
 def label_breakouts(df, future_days=5, threshold=0.1):
     df = df.copy()
     df["future_max"] = df["Close"].rolling(window=future_days).max().shift(-future_days)
+    df.dropna(subset=["future_max"], inplace=True)
 
-    # Compare aligned Series
-    aligned = df[["future_max", "Close"]].dropna()
-    aligned["label"] = (aligned["future_max"] > aligned["Close"] * (1 + threshold)).astype(int)
-
-    df = df.loc[aligned.index]  # align original df to labeled rows
-    df["label"] = aligned["label"]
+    # Align Series with SAME index to avoid ValueError
+    close = df["Close"]
+    future_max = df["future_max"]
+    breakout_label = (future_max.values > (close.values * (1 + threshold))).astype(int)
+    df["label"] = breakout_label
 
     return df
 
