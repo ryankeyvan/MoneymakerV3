@@ -5,62 +5,27 @@ from ta.momentum import RSIIndicator
 from utils.sentiment import get_sentiment_score
 from ml_model import predict_breakout
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
 
-# Replace or extend this with your 100+ ticker list
-def get_all_stocks_above_5_dollars():
-    return [
-        "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "NFLX", "V", "MA",
-        "PLTR", "SNOW", "PYPL", "COIN", "F", "GM", "NKE", "WMT", "PEP", "TGT",
-        "DIS", "CRM", "ADBE", "ORCL", "AVGO", "UBER", "SQ", "SHOP", "AMD", "INTC"
-        # Add more...
-    ]
-
-def scan_single_stock(ticker, st_log=None):
+def scan_single_stock(ticker, log_queue=None):
     try:
         data = yf.download(ticker, period="3mo", interval="1d", progress=False)
         if data.empty or len(data) < 14:
-            if st_log:
-                st_log.write(f"⚠️ {ticker}: Not enough price history.")
+            if log_queue:
+                log_queue.put(f"⚠️ {ticker}: Not enough price history.")
             return None
 
         recent_data = data.tail(14)
-
-        # RSI with fallback
-        try:
-            rsi = RSIIndicator(close=recent_data["Close"]).rsi().iloc[-1]
-        except:
-            rsi = 50.0
-
-        # Momentum
-        try:
-            momentum = recent_data["Close"].iloc[-1] / recent_data["Close"].iloc[0] - 1
-        except:
-            momentum = 0
-
-        # Volume ratio
-        try:
-            volume_ratio = recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean()
-            volume_change = (recent_data["Volume"].iloc[-1] - recent_data["Volume"].mean()) / recent_data["Volume"].mean() * 100
-        except:
-            volume_ratio = 1.0
-            volume_change = 0
-
+        rsi = RSIIndicator(close=recent_data["Close"]).rsi().iloc[-1]
+        momentum = recent_data["Close"].iloc[-1] / recent_data["Close"].iloc[0] - 1
+        volume_ratio = recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean()
+        volume_change = (recent_data["Volume"].iloc[-1] - recent_data["Volume"].mean()) / recent_data["Volume"].mean() * 100
         current_price = round(recent_data["Close"].iloc[-1], 2)
+        sentiment_score = get_sentiment_score(ticker)
+        breakout_score = predict_breakout(volume_ratio, momentum + 1, rsi)
 
-        # Sentiment fallback
-        try:
-            sentiment_score = get_sentiment_score(ticker)
-        except:
-            sentiment_score = 0.5
-
-        # Predict breakout score
-        try:
-            breakout_score = predict_breakout(volume_ratio, momentum + 1, rsi)
-        except:
-            breakout_score = 0.0
-
-        if st_log:
-            st_log.write(f"✅ {ticker} scanned — Breakout: {breakout_score:.3f}")
+        if log_queue:
+            log_queue.put(f"✅ {ticker} scanned — Breakout: {breakout_score:.3f}")
 
         return {
             "Ticker": ticker,
@@ -75,17 +40,17 @@ def scan_single_stock(ticker, st_log=None):
         }
 
     except Exception as e:
-        if st_log:
-            st_log.write(f"❌ {ticker} error: {e}")
+        if log_queue:
+            log_queue.put(f"❌ {ticker} error: {e}")
         return None
 
-def scan_stocks(tickers=None, auto=False, update_progress=None, st_log=None):
+def scan_stocks(tickers, update_progress=None):
     results = []
-    tickers = tickers or get_all_stocks_above_5_dollars()
     total = len(tickers)
+    log_queue = queue.Queue()
 
     with ThreadPoolExecutor(max_workers=15) as executor:
-        futures = {executor.submit(scan_single_stock, ticker, st_log): ticker for ticker in tickers}
+        futures = {executor.submit(scan_single_stock, ticker, log_queue): ticker for ticker in tickers}
         for i, future in enumerate(as_completed(futures)):
             result = future.result()
             if result:
@@ -93,4 +58,8 @@ def scan_stocks(tickers=None, auto=False, update_progress=None, st_log=None):
             if update_progress:
                 update_progress((i + 1) / total)
 
-    return results
+    logs = []
+    while not log_queue.empty():
+        logs.append(log_queue.get())
+
+    return results, logs

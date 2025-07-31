@@ -5,7 +5,7 @@ from scanner import scan_stocks, get_all_stocks_above_5_dollars
 st.set_page_config(page_title="Money Maker AI", layout="wide")
 st.title("💸 Money Maker: AI Stock Breakout Assistant")
 
-# Sidebar
+# Sidebar input
 st.sidebar.header("🔧 Options")
 input_tickers = st.sidebar.text_input("Enter ticker symbols (comma-separated)", "")
 auto_scan = st.sidebar.checkbox("Auto-scan 100+ popular stocks over $5", value=False)
@@ -26,36 +26,41 @@ with st.expander("📘 Indicator Key"):
 - **Stop Loss**: Suggested -7% downside buffer
 """)
 
-# Buttons
+# Scan buttons
 run_scan = st.button("🚀 Run Scan")
 test_scan = st.button("🧪 Test on AAPL")
-
-# Output container
 log_area = st.container()
 
 # Run scan
 if run_scan:
     if auto_scan:
         tickers = get_all_stocks_above_5_dollars()
-        st.info(f"🔍 Auto-scanning {len(tickers)} top stocks...")
+        st.info(f"🔍 Auto-scanning {len(tickers)} stocks...")
     elif input_tickers:
         tickers = [t.strip().upper() for t in input_tickers.split(",") if t.strip()]
         st.info(f"🔍 Scanning: {', '.join(tickers)}")
     else:
-        st.warning("⚠️ Please enter tickers or enable auto-scan.")
+        st.warning("⚠️ Enter tickers or enable auto-scan.")
         st.stop()
 
     progress = st.progress(0.0, text="⏳ Starting scan...")
-    st.session_state["results"] = scan_stocks(
+    results, logs = scan_stocks(
         tickers=tickers,
-        update_progress=lambda p: progress.progress(p, text=f"🔎 Scanning... {int(p * 100)}%"),
-        st_log=log_area
+        update_progress=lambda p: progress.progress(p, text=f"🔎 Scanning... {int(p * 100)}%")
     )
+    st.session_state["results"] = results
     progress.empty()
+
+    # Log outputs
+    for log in logs:
+        log_area.write(log)
 
 if test_scan:
     st.info("🧪 Scanning AAPL...")
-    st.session_state["results"] = scan_stocks(tickers=["AAPL"], st_log=log_area)
+    results, logs = scan_stocks(tickers=["AAPL"])
+    st.session_state["results"] = results
+    for log in logs:
+        log_area.write(log)
 
 # Display results
 results = st.session_state["results"]
