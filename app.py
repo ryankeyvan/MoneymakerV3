@@ -42,29 +42,35 @@ elif scan_mode == "Auto Scan ($5+)":
 
 # Display Results
 if results:
-    st.success(f"✅ {len(results)} stocks analyzed. Showing top 10 by breakout score.")
     df = pd.DataFrame(results)
-    df = df.sort_values(by="Breakout Score", ascending=False).head(10)
 
-    for _, row in df.iterrows():
-        st.subheader(f"📈 {row['Ticker']} — {'🔥 Buy' if row['Breakout Score'] >= 0.7 else '👀 Watch'}")
-        st.markdown(f"- **Current Price:** `${row['Current Price']}`")
-        st.markdown(f"- **Breakout Score:** `{row['Breakout Score']}`")
-        st.markdown(f"- **Target Price:** `${row['Target Price']}`")
-        st.markdown(f"- **Stop Loss:** `${row['Stop Loss']}`")
-        st.markdown(f"- **RSI:** `{row['RSI']}`")
-        st.markdown(f"- **Momentum:** `{row['Momentum']}`")
-        st.markdown(f"- **Volume Change:** `{row['Volume Change']}%`")
-        st.markdown(f"- **Sentiment Score:** `{row['Sentiment Score']}`")
-        st.markdown("---")
+    if "Breakout Score" not in df.columns:
+        st.error("❌ No valid breakout scores found. Some tickers may have failed to fetch data.")
+    else:
+        df = df.dropna(subset=["Breakout Score"])
+        df = df.sort_values(by="Breakout Score", ascending=False).head(10)
 
-    # CSV Export
-    st.download_button(
-        label="⬇️ Export Results to CSV",
-        data=df.to_csv(index=False).encode("utf-8"),
-        file_name="breakout_scan_results.csv",
-        mime="text/csv"
-    )
+        st.success(f"✅ {len(df)} stocks displayed with valid breakout scores.")
+
+        for _, row in df.iterrows():
+            st.subheader(f"📈 {row['Ticker']} — {'🔥 Buy' if row['Breakout Score'] >= 0.7 else '👀 Watch'}")
+            st.markdown(f"- **Current Price:** `${row['Current Price']}`")
+            st.markdown(f"- **Breakout Score:** `{row['Breakout Score']}`")
+            st.markdown(f"- **Target Price:** `${row['Target Price']}`")
+            st.markdown(f"- **Stop Loss:** `${row['Stop Loss']}`")
+            st.markdown(f"- **RSI:** `{row['RSI']}`")
+            st.markdown(f"- **Momentum:** `{row['Momentum']}`")
+            st.markdown(f"- **Volume Change:** `{row['Volume Change']}%`")
+            st.markdown(f"- **Sentiment Score:** `{row['Sentiment Score']}`")
+            st.markdown("---")
+
+        # CSV Export
+        st.download_button(
+            label="⬇️ Export Results to CSV",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name="breakout_scan_results.csv",
+            mime="text/csv"
+        )
 
 elif scan_mode and not results:
     st.warning("⚠️ No results found or scan hasn’t been run yet.")
