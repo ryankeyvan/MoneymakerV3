@@ -15,11 +15,16 @@ TICKERS = [
     "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT", "V", "MA", "JNJ", "PG",
     "XOM", "CVX", "KO", "PFE", "MRK", "T", "VZ", "MCD"
 ]
-FUTURE_DAYS = 5
+FUTURE_DAYS = 3
 BREAKOUT_THRESHOLD = 1.10  # 10% rise = breakout
 
 def fetch_and_prepare(ticker, future_days=FUTURE_DAYS):
     df = yf.download(ticker, period="3y", interval="1d", auto_adjust=False)
+
+    # Flatten multi-index columns if they exist (fixes KeyError on columns)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
     df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
     if df.empty or len(df) < future_days + 1:
