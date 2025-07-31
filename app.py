@@ -1,42 +1,35 @@
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 import joblib
-from alpha_vantage.timeseries import TimeSeries
-from utils.preprocessing import preprocess_single_stock
 import matplotlib.pyplot as plt
+from utils.preprocessing import preprocess_single_stock
 import os
 
 # === CONFIG ===
-API_KEY = "JMOVPJWW0ZA4ASVW"
 MODEL_PATH = "models/breakout_model.pkl"
 TICKERS = ["AAPL", "MSFT", "TSLA", "NVDA", "AMD", "GOOG", "META", "NFLX", "ORCL", "BABA", "DIS", "BAC", "NKE", "CRM"]
 CONFIDENCE_THRESHOLD = 0.60
 
-ts = TimeSeries(key=API_KEY, output_format='pandas')
-
 # === Load Model ===
+if not os.path.exists(MODEL_PATH):
+    st.error("❌ Model not found. Please train it using train_model.py first.")
+    st.stop()
+
 model = joblib.load(MODEL_PATH)
 
 st.set_page_config(page_title="MoneyMakerV3", layout="wide")
 st.title("📈 MoneyMakerV3 — Breakout Stock Scanner")
-st.markdown("Scans top tickers and ranks breakout candidates using AI.")
+st.markdown("Scans tickers and ranks breakout candidates using your trained model.")
 
 if st.button("🚀 Scan Now"):
     results = []
 
-    with st.spinner("Scanning for breakouts..."):
+    with st.spinner("Scanning for breakouts using live data..."):
         for ticker in TICKERS:
             try:
-                data, _ = ts.get_daily(symbol=ticker, outputsize='compact')
-                data.rename(columns={
-                    '1. open': 'Open',
-                    '2. high': 'High',
-                    '3. low': 'Low',
-                    '4. close': 'Close',
-                    '5. volume': 'Volume'
-                }, inplace=True)
-                data = data.sort_index()
-                df = data[["Open", "High", "Low", "Close", "Volume"]].dropna()
+                df = yf.download(ticker, period="6mo", interval="1d", auto_adjust=False)
+                df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
                 if df.empty or len(df) < 50:
                     continue
