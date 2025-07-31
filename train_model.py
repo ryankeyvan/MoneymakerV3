@@ -15,8 +15,25 @@ TICKERS = [
     "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT", "V", "MA", "JNJ", "PG",
     "XOM", "CVX", "KO", "PFE", "MRK", "T", "VZ", "MCD"
 ]
-FUTURE_DAYS = 3  # reduced from 5
+FUTURE_DAYS = 5
 BREAKOUT_THRESHOLD = 1.10  # 10% rise = breakout
+
+def fetch_and_prepare(ticker, future_days=FUTURE_DAYS):
+    df = yf.download(ticker, period="3y", interval="1d", auto_adjust=False)
+    df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+
+    if df.empty or len(df) < future_days + 1:
+        print(f"⚠️ Not enough data for {ticker}")
+        return None
+
+    df["future_max"] = df["Close"].rolling(window=future_days).max().shift(-future_days)
+    df = df.dropna(subset=["future_max", "Close"])
+
+    if df.empty:
+        print(f"⚠️ No valid labeled data for {ticker} after processing")
+        return None
+
+    return df
 
 X_all = []
 y_all = []
@@ -26,20 +43,8 @@ print("📊 Starting model training using yfinance...")
 for ticker in TICKERS:
     print(f"📈 Fetching {ticker} from yfinance...")
     try:
-        df = yf.download(ticker, period="3y", interval="1d", auto_adjust=False)
-        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
-
-        if df.empty or len(df) < 100:
-            print(f"⚠️ Skipping {ticker}: Not enough data.")
-            continue
-
-        # Create breakout target
-        df["future_max"] = df["Close"].rolling(window=FUTURE_DAYS).max().shift(-FUTURE_DAYS)
-        df = df.dropna(subset=["future_max", "Close"])
-
-        print(f"{ticker}: After dropping NA, df shape = {df.shape}")
-        if df.empty:
-            print(f"⚠️ Skipping {ticker}: DataFrame empty after dropping NA")
+        df = fetch_and_prepare(ticker)
+        if df is None:
             continue
 
         # Preprocess features and get processed df
