@@ -7,10 +7,19 @@ import random
 import datetime
 
 def get_all_stocks_above_5_dollars():
-    # Placeholder — replace with a dynamic screener like Finnhub or use static list
-    sp500 = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'GOOGL', 'META', 'AMZN', 'NFLX', 'V', 'JPM']
-    return sp500
-
+    return [
+        "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "NFLX", "V", "MA",
+        "CRM", "ADBE", "INTC", "AMD", "AVGO", "QCOM", "CSCO", "ORCL", "SHOP", "UBER",
+        "PYPL", "SQ", "COIN", "PLTR", "SNOW", "NET", "DDOG", "ZS", "PANW", "CRWD", "DOCU",
+        "ROKU", "TWLO", "SPOT", "ABNB", "RBLX", "NKE", "LULU", "DIS", "WMT", "TGT",
+        "HD", "LOW", "COST", "SBUX", "MCD", "CMG", "EL", "KO", "PEP", "PM",
+        "XOM", "CVX", "COP", "SLB", "OXY", "HAL", "PSX", "MPC", "PXD", "FANG",
+        "JPM", "BAC", "WFC", "GS", "MS", "SCHW", "AXP", "C", "USB", "TD",
+        "UNH", "JNJ", "PFE", "LLY", "MRK", "BMY", "VRTX", "REGN", "CVS", "CI",
+        "TMO", "ISRG", "DHR", "ZBH", "BDX", "GE", "CAT", "DE", "HON", "BA",
+        "LMT", "NOC", "RTX", "FDX", "UPS", "DAL", "UAL", "F", "GM", "RIVN"
+    ]
+	
 def calculate_sentiment_score(ticker):
     # Placeholder: Random for demo
     return random.uniform(-1, 1)
