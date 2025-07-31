@@ -1,10 +1,10 @@
 import yfinance as yf
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 from ta.momentum import RSIIndicator
-import random
-import datetime
+from utils.sentiment import get_sentiment_score
+from ml_model import predict_breakout
+import time
 
 def get_all_stocks_above_5_dollars():
     return [
@@ -19,80 +19,54 @@ def get_all_stocks_above_5_dollars():
         "TMO", "ISRG", "DHR", "ZBH", "BDX", "GE", "CAT", "DE", "HON", "BA",
         "LMT", "NOC", "RTX", "FDX", "UPS", "DAL", "UAL", "F", "GM", "RIVN"
     ]
-	
-def calculate_sentiment_score(ticker):
-    # Placeholder: Random for demo
-    return random.uniform(-1, 1)
 
 def scan_stocks(tickers=None, auto=False):
-    if auto:
+    results = []
+
+    if auto or tickers is None:
         tickers = get_all_stocks_above_5_dollars()
 
-    if not tickers:
-        return []
-
-    results = []
     for ticker in tickers:
         try:
-            data = yf.download(ticker, period="3mo", interval="1d")
-            if data.empty or len(data) < 20:
-                raise ValueError("Insufficient data")
+            time.sleep(0.5)
+            data = yf.download(ticker, period="3mo", interval="1d", progress=False)
+            if data.empty or len(data) < 14:
+                continue
 
-            data['RSI'] = RSIIndicator(data['Close']).rsi()
-            data['Momentum'] = data['Close'].diff()
-            data['Volume_Change'] = data['Volume'].pct_change().fillna(0)
+            close_prices = data["Close"]
+            volumes = data["Volume"]
+            recent_data = data.tail(14)
 
-            latest = data.iloc[-1]
-            rsi = latest['RSI']
-            momentum = latest['Momentum']
-            volume_change = latest['Volume_Change']
-            current_price = latest['Close']
+            # Technical indicators
+            rsi = RSIIndicator(close=recent_data["Close"]).rsi().iloc[-1]
+            momentum = recent_data["Close"].iloc[-1] / recent_data["Close"].iloc[0] - 1
+            volume_change = (recent_data["Volume"].iloc[-1] - recent_data["Volume"].mean()) / recent_data["Volume"].mean() * 100
+            current_price = recent_data["Close"].iloc[-1]
 
-            # Normalize for scoring
-            score = 0
-            if rsi and not np.isnan(rsi):
-                if 50 < rsi < 70:
-                    score += 0.3
-                elif rsi >= 70:
-                    score += 0.1
+            # AI sentiment and breakout score
+            sentiment_score = get_sentiment_score(ticker)
+            breakout_score = predict_breakout(
+                volume_ratio=recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean(),
+                price_momentum=momentum + 1,
+                rsi=rsi
+            )
 
-            if momentum > 0:
-                score += 0.2
-
-            if volume_change > 0.25:
-                score += 0.2
-            elif volume_change > 0.1:
-                score += 0.1
-
-            # Sentiment (fake/random placeholder)
-            sentiment_score = calculate_sentiment_score(ticker)
-            if sentiment_score > 0.3:
-                score += 0.2
-            elif sentiment_score > 0:
-                score += 0.1
-
-            score = round(min(score, 1.0), 2)
-
-            # Optional target price & stop loss estimates
-            target_price = round(current_price * (1 + score * 0.15), 2)
-            stop_loss = round(current_price * (1 - score * 0.10), 2)
-
-            results.append({
+            result = {
                 "Ticker": ticker,
                 "Current Price": round(current_price, 2),
+                "Breakout Score": round(breakout_score, 3),
+                "Target Price": round(current_price * 1.15, 2),
+                "Stop Loss": round(current_price * 0.93, 2),
                 "RSI": round(rsi, 2),
-                "Momentum": round(momentum, 2),
-                "Volume Change": round(volume_change * 100, 2),
-                "Sentiment Score": round(sentiment_score, 2),
-                "Breakout Score": score,
-                "Target Price": target_price,
-                "Stop Loss": stop_loss
-            })
+                "Momentum": round(momentum * 100, 2),
+                "Volume Change": round(volume_change, 2),
+                "Sentiment Score": sentiment_score
+            }
+
+            results.append(result)
 
         except Exception as e:
-            results.append({
-                "Ticker": ticker,
-                "Error": str(e)
-            })
+            print(f"❌ Error with {ticker}: {e}")
+            continue
 
     return results
