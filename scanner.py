@@ -20,27 +20,26 @@ def run_breakout_scan(ticker_list):
 
             recent_data = data.tail(14)
 
-            if recent_data["Volume"].mean() == 0 or recent_data["Close"].iloc[0] == 0:
+            # ✅ Check that recent_data has valid volume and price
+            if recent_data["Volume"].mean().item() == 0 or recent_data["Close"].iloc[0].item() == 0:
                 st.write(f"⚠️ Invalid price or volume data for {ticker}")
                 continue
 
             volume_ratio = recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean()
             price_momentum = recent_data["Close"].iloc[-1] / recent_data["Close"].iloc[0]
-            rsi = 100 - (100 / (1 + (recent_data["Close"].pct_change().mean() / recent_data["Close"].pct_change().std())))
+            rsi_numerator = recent_data["Close"].pct_change().mean()
+            rsi_denominator = recent_data["Close"].pct_change().std()
+            rsi = 100 - (100 / (1 + (rsi_numerator / rsi_denominator))) if rsi_denominator != 0 else 50
 
             sentiment = get_sentiment_score(ticker)
             breakout_score = predict_breakout(volume_ratio, price_momentum, rsi)
 
             last_close = float(recent_data["Close"].iloc[-1])
 
-            # Define signal
             signal = "🔥 Buy" if breakout_score >= 0.7 else "🧪 Watch"
-
-            # Only show price targets if high confidence
             target_price = round(last_close * 1.15, 2) if breakout_score >= 0.7 else "N/A"
             stop_loss = round(last_close * 0.93, 2) if breakout_score >= 0.7 else "N/A"
 
-            # Debug log
             st.write(f"{ticker}: Breakout Score={breakout_score:.2f}, Close=${last_close:.2f}, Sentiment={sentiment}")
 
             results.append({
