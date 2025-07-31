@@ -7,37 +7,45 @@ from tqdm import tqdm
 import pickle
 import json
 
-# ——— Resolve paths relative to this script, not your shell’s CWD ———
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(BASE_DIR, 'models')
+# ——— locate this script’s folder and the models/ subfolder ———
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+MODELS_DIR = os.path.join(SCRIPT_DIR, 'models')
 
-# ——— Load trained models (4-feature OHLC) ———
+# ——— sanity check ———
+if not os.path.isdir(MODELS_DIR):
+    raise FileNotFoundError(f"Models directory not found: {MODELS_DIR}")
+
+print(f"🔍 Loading models from: {MODELS_DIR}")
+print("📂 Available files:", os.listdir(MODELS_DIR))
+
+def load_model(fname):
+    path = os.path.join(MODELS_DIR, fname)
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Expected model file {fname} not found in {MODELS_DIR}."
+        )
+    return pickle.load(open(path, 'rb'))
+
+# ——— load your 3 horizons ———
 models = {
-    '1w': pickle.load(open(os.path.join(MODELS_DIR, 'breakout_1w.pkl'), 'rb')),
-    '1m': pickle.load(open(os.path.join(MODELS_DIR, 'breakout_1m.pkl'), 'rb')),
-    '3m': pickle.load(open(os.path.join(MODELS_DIR, 'breakout_3m.pkl'), 'rb'))
+    '1w': load_model('breakout_1w.pkl'),
+    '1m': load_model('breakout_1m.pkl'),
+    '3m': load_model('breakout_3m.pkl'),
 }
 
-# ——— Load saved thresholds ———
+# ——— thresholds.json ———
 with open(os.path.join(MODELS_DIR, 'thresholds.json'), 'r') as f:
     thresholds = json.load(f)
 
 
 def get_sp500_tickers():
-    """
-    Fetches the list of S&P 500 tickers from Wikipedia
-    and remaps dots to dashes for Yahoo compatibility.
-    """
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
     table = pd.read_html(url, header=0)[0]
-    tickers = table['Symbol'].str.replace('.', '-', regex=False).tolist()
-    return tickers
+    return table['Symbol'].str.replace('.', '-', regex=False).tolist()
 
 
 def extract_features(df):
-    """
-    Grab the latest OHLC row (4 features).
-    """
+    # only keep OHLC → exactly 4 features
     row = df[['Open', 'High', 'Low', 'Close']].iloc[-1]
     return row.values
 
@@ -58,13 +66,13 @@ def scan_tickers(tickers):
                 ticker,
                 period='6mo',
                 interval='1d',
-                auto_adjust=False,   # preserve raw OHLC columns
+                auto_adjust=False,   # ← preserve raw OHLC
                 progress=False
             )
             if df.empty:
                 raise ValueError("No data fetched")
 
-            # keep only OHLC so we're back to 4 features
+            # strip out everything but OHLC
             df = df[['Open', 'High', 'Low', 'Close']]
 
             current = df['Close'].iloc[-1]
@@ -81,13 +89,11 @@ def scan_tickers(tickers):
                 rec[f'score_{h}']    = round(prob, 4)
                 rec[f'decision_{h}'] = decision
                 rec[f'target_{h}']   = calculate_target_price(current, thresholds[h])
-
             results.append(rec)
 
         except Exception as e:
             errors.append({'ticker': ticker, 'error': str(e)})
 
-    # only show those flagged BUY on the 1-month horizon
     buys = [r for r in results if r['decision_1m'] == 'BUY']
     return buys, errors
 
@@ -101,7 +107,7 @@ if __name__ == '__main__':
 
     buy_list, fetch_errors = scan_tickers(tickers)
 
-    print("=== BREAKOUT CANDIDATES (1m) ===")
+    print("\n=== BREAKOUT CANDIDATES (1m) ===")
     for r in buy_list:
         print(r)
 
