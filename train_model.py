@@ -1,62 +1,82 @@
-# train_model.py
-
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import joblib
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-import joblib
+from sklearn.model_selection import train_test_split
 import os
 
-# Parameters
+# ---------------------- CONFIG ----------------------
 TICKERS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"]
 START_DATE = "2020-01-01"
 END_DATE = "2024-12-31"
-BREAKOUT_THRESHOLD = 0.10  # 10% gain in next N days
-FUTURE_DAYS = 5
+LOOKAHEAD_DAYS = 5
+BREAKOUT_THRESHOLD = 0.05
+MODEL_PATH = "model.pkl"
+SCALER_PATH = "scaler.pkl"
 
-all_data = []
+# ---------------------- FEATURE ENGINEERING ----------------------
+def compute_features(df):
+    df["Return"] = df["Close"].pct_change()
+    df["Momentum"] = df["Return"].rolling(window=3).mean()
+    df["Volume_Ratio"] = df["Volume"] / df["Volume"].rolling(window=5).mean()
+    delta = df["Close"].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+    rs = avg_gain / (avg_loss + 1e-9)
+    df["RSI"] = 100 - (100 / (1 + rs))
+    return df
 
-def label_breakouts(df, threshold=BREAKOUT_THRESHOLD, future_days=FUTURE_DAYS):
-    # Ensure we have required column
-    if "Close" not in df.columns:
-        raise ValueError("Missing 'Close' column")
-
-    df = df.copy()
-    df["future_max"] = df["Close"].shift(-1).rolling(window=future_days).max()
-    df.dropna(subset=["future_max"], inplace=True)
-
+# ---------------------- LABELING ----------------------
+def label_breakouts(df, threshold=BREAKOUT_THRESHOLD, lookahead=LOOKAHEAD_DAYS):
+    df = df.reset_index(drop=True)
+    future_max = []
+    for i in range(len(df)):
+        future_window = df["Close"].iloc[i+1:i+1+lookahead]
+        if not future_window.empty:
+            future_max.append(future_window.max())
+        else:
+            future_max.append(np.nan)
+    df["future_max"] = future_max
+    df.dropna(subset=["future_max", "Close"], inplace=True)
     df["label"] = (df["future_max"] > df["Close"] * (1 + threshold)).astype(int)
     return df
 
-def calculate_indicators(df):
-    df = df.copy()
-    df["momentum"] = df["Close"] - df["Close"].shift(5)
-    df["rsi"] = compute_rsi(df["Close"], window=14)
-    df["volume_ratio"] = df["Volume"] / df["Volume"].rolling(window=5).mean()
-    df.dropna(inplace=True)
-    return df
-
-def compute_rsi(series, window=14):
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+# ---------------------- MAIN TRAINING ----------------------
+all_data = []
 
 for ticker in TICKERS:
-    print(f"Fetching {ticker}...")
+    print(f"📈 Fetching {ticker}...")
     try:
         df = yf.download(ticker, start=START_DATE, end=END_DATE)
-        if df.empty:
-            raise ValueError("DataFrame is empty.")
-
+        df = compute_features(df)
         df = label_breakouts(df)
-        df = calculate_indicators(df)
-        df["ticker"] = ticker
-        all_data.append(df[["momentum", "rsi", "volume_ratio", "label", "ticker"]])
+        df = df.dropna(subset=["Momentum", "Volume_Ratio", "RSI"])
+        features = df[["Volume_Ratio", "Momentum", "RSI"]]
+        labels = df["label"]
+        all_data.append((features, labels))
     except Exception as e:
         print(f"❌ Error with {ticker}: {e}")
 
-# Com
+if not all_data:
+    raise RuntimeError("No data was successfully processed.")
+
+X = pd.concat([f for f, _ in all_data])
+y = pd.concat([l for _, l in all_data])
+
+# ---------------------- SCALING + TRAINING ----------------------
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+# ---------------------- SAVE MODEL & SCALER ----------------------
+joblib.dump(model, MODEL_PATH)
+joblib.dump(scaler, SCALER_PATH)
+print("✅ Model and scaler saved!")
