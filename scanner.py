@@ -1,4 +1,3 @@
-# scanner.py
 import yfinance as yf
 import numpy as np
 import pandas as pd
@@ -6,46 +5,52 @@ import pickle
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
+# Load trained breakout model
 MODEL_PATH = "models/breakout_model.pkl"
 with open(MODEL_PATH, "rb") as f:
     model = pickle.load(f)
 
-# Use the threshold your training script just printed
+# Tuned F1 threshold
 F1_THRESHOLD = 0.180
 
-# Simple in-memory cache for historical data
+# In-memory cache for historical data
 data_cache = {}
 
+
 def get_stock_data(ticker, period="6mo", interval="1d"):
+    """
+    Fetch price history via yfinance.Ticker to avoid multi-index issues.
+    """
     key = f"{ticker}_{period}_{interval}"
     if key in data_cache:
         return data_cache[key]
-    df = yf.download(ticker, period=period, interval=interval, progress=False)
+    tk = yf.Ticker(ticker)
+    df = tk.history(period=period, interval=interval)
     data_cache[key] = df
     return df
 
+
 def compute_features(df):
+    """Compute the 4 breakout features from price & volume."""
     closes = df["Close"]
     returns = closes.pct_change().fillna(0)
     return np.array([
-        returns.iloc[-1],                   # last-day return
-        returns.iloc[-5:].mean(),           # 5-day avg return
-        returns.iloc[-20:].std(),           # 20-day volatility
+        returns.iloc[-1],                 # last-day return
+        returns.iloc[-5:].mean(),         # 5-day avg return
+        returns.iloc[-20:].std(),         # 20-day volatility
         df["Volume"].iloc[-1] / df["Volume"].iloc[-5:].mean()  # volume spike
     ])
+
 
 def scan_single_stock(ticker):
     try:
         df = get_stock_data(ticker)
         if df is None or df.empty:
             return {"ticker": ticker, "error": "No data fetched"}
+        if "Close" not in df.columns or "Volume" not in df.columns:
+            return {"ticker": ticker, "error": "Unexpected data format"}
 
-        # Ensure we extract a single float, not a Series
-        closes = df["Close"]
-        if isinstance(closes, pd.DataFrame):
-            closes = closes[ticker]       # when yf.download returns multi-column
-        last_price = float(closes.iloc[-1])
-
+        last_price = float(df["Close"].iloc[-1])
         feat = compute_features(df).reshape(1, -1)
         proba = model.predict_proba(feat)[0][1]
 
@@ -60,21 +65,23 @@ def scan_single_stock(ticker):
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}
 
+
 def scan_tickers(tickers, max_workers=8):
+    """Parallel scan of multiple tickers."""
     results, failures = [], []
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = {ex.submit(scan_single_stock, t): t for t in tickers}
-        for fut in tqdm(as_completed(futures), total=len(tickers), desc="Scanning"):
-            res = fut.result()
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(scan_single_stock, t): t for t in tickers}
+        for future in tqdm(as_completed(futures), total=len(tickers), desc="Scanning"):
+            res = future.result()
             (failures if "error" in res else results).append(res)
     return results, failures
+
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
         print("Usage: python scanner.py TICKER1 TICKER2 …")
         sys.exit(1)
-
     tickers = sys.argv[1:]
     print(f"Starting scan of {len(tickers)} tickers… threshold={F1_THRESHOLD}\n")
     results, errors = scan_tickers(tickers)
