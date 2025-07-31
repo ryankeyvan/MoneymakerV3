@@ -31,6 +31,11 @@ for ticker in TICKERS:
 
     try:
         df = yf.download(ticker, period="6mo", interval="1d", auto_adjust=False)
+
+        # Flatten MultiIndex columns if they exist
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
         df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
         if df.empty or len(df) < 50:
