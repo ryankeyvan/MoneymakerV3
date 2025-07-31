@@ -7,7 +7,6 @@ from ml_model import predict_breakout
 import traceback
 
 def get_all_stocks_above_5_dollars():
-    # Placeholder list. You can later integrate a live screener here.
     return [
         "AAPL", "TSLA", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "NFLX",
         "AMD", "INTC", "BA", "JPM", "V", "DIS", "UBER", "LYFT", "PYPL", "CRM", "SHOP", "RIVN"
@@ -20,35 +19,32 @@ def scan_single_stock(ticker):
         if df is None or df.empty or len(df) < 14:
             return None, f"{ticker} error: insufficient data"
 
-        # Drop rows with missing values
-        df.dropna(inplace=True)
+        df = df.dropna()
 
-        # Ensure the price and volume columns exist
-        if 'Close' not in df.columns or 'Volume' not in df.columns:
-            return None, f"{ticker} error: missing Close or Volume data"
+        # Make sure we're working with 1D arrays
+        close = df['Close'].values.squeeze()
+        volume = df['Volume'].values.squeeze()
 
-        # Calculate volume ratio (today's volume / 14-day average volume)
-        volume_ratio = df['Volume'].iloc[-1] / df['Volume'].tail(14).mean()
+        if len(close) < 14 or len(volume) < 14:
+            return None, f"{ticker} error: not enough clean data"
 
-        # Calculate price momentum (today's close / close 14 days ago)
-        price_momentum = df['Close'].iloc[-1] / df['Close'].iloc[-14]
+        # Volume Ratio
+        volume_ratio = volume[-1] / np.mean(volume[-14:])
 
-        # Calculate RSI (Relative Strength Index)
-        delta = df['Close'].diff()
+        # Price Momentum
+        price_momentum = close[-1] / close[-14]
+
+        # RSI Calculation
+        delta = np.diff(close)
         gain = np.where(delta > 0, delta, 0)
         loss = np.where(delta < 0, -delta, 0)
         avg_gain = pd.Series(gain).rolling(window=14).mean().iloc[-1]
         avg_loss = pd.Series(loss).rolling(window=14).mean().iloc[-1]
-        if avg_loss == 0:
-            rsi = 100
-        else:
-            rs = avg_gain / avg_loss
-            rsi = 100 - (100 / (1 + rs))
+        rs = avg_gain / avg_loss if avg_loss != 0 else 0
+        rsi = 100 - (100 / (1 + rs)) if avg_loss != 0 else 100
 
-        # Run prediction
+        # ML Prediction
         breakout_score = predict_breakout(volume_ratio, price_momentum, rsi)
-
-        # Signal generation
         signal = "🔥 Buy" if breakout_score >= 0.7 else "🧐 Watch"
 
         return {
