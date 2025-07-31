@@ -1,7 +1,7 @@
 import streamlit as st
 from scanner import scan_stocks
 
-# Try importing optional function
+# Try optional import
 try:
     from scanner import get_all_stocks_above_5_dollars
     HAS_AUTO_SCAN = True
@@ -11,7 +11,7 @@ except ImportError:
 st.set_page_config(page_title="📈 Money Maker AI", layout="wide")
 st.title("💸 Money Maker AI - Breakout Stock Scanner")
 
-# Sidebar
+# Sidebar setup
 st.sidebar.header("📊 Scanner Options")
 mode_options = ["Enter Tickers"]
 if HAS_AUTO_SCAN:
@@ -30,7 +30,7 @@ scan_button = st.sidebar.button("🚀 Run Scan")
 with st.expander("📘 Indicator Key"):
     st.markdown("""
     - **Breakout Score**: Confidence (0–1) of breakout potential. ≥ 0.7 = strong signal.
-    - **RSI**: Relative Strength Index (30–70 is neutral; >70 = overbought).
+    - **RSI**: Relative Strength Index (30–70 = neutral; >70 = overbought).
     - **Momentum**: 14-day price change (%).
     - **Volume Change**: Volume spike vs. 14-day average (%).
     - **Signal**: 🔥 Buy / 🧐 Watch
@@ -51,12 +51,18 @@ if scan_button:
         update_progress=lambda p: progress_bar.progress(p, text=f"🔍 Scanning... {int(p * 100)}%"),
     )
 
-    if not results:
-        output_area.warning("⚠️ No valid breakout scores found.")
+    # Handle case where results aren't a DataFrame or are empty
+    if not results or not isinstance(results, list) or len(results) == 0:
+        output_area.warning("⚠️ No valid breakout scores found or no data available.")
     else:
-        df = st.session_state["results"] = results
-        df = df.sort_values(by="Breakout Score", ascending=False)
-        output_area.dataframe(df)
+        try:
+            import pandas as pd
+            df = pd.DataFrame(results)
+            df = df.sort_values(by="Breakout Score", ascending=False)
+            st.session_state["results"] = df
+            output_area.dataframe(df)
+        except Exception as e:
+            output_area.error(f"❌ Error converting results to table: {e}")
 
     if logs:
         st.session_state["logs"] = logs
