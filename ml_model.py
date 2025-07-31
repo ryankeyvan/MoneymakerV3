@@ -4,7 +4,6 @@ from sklearn.svm import SVC
 import numpy as np
 
 # Pre-trained-like SVM for demo purposes
-# Normally you'd train this model with real labeled data
 def predict_breakout(volume_ratio, price_momentum, rsi):
     # Create a dummy training dataset
     X_train = np.array([
@@ -20,4 +19,16 @@ def predict_breakout(volume_ratio, price_momentum, rsi):
 
     # Normalize
     scaler = StandardScaler()
-    X
+    X_train_scaled = scaler.fit_transform(X_train)
+
+    # Train SVM
+    model = SVC(probability=True)
+    model.fit(X_train_scaled, y_train)
+
+    # Prepare input
+    X_input = np.array([[volume_ratio, price_momentum, rsi]])
+    X_input_scaled = scaler.transform(X_input)
+
+    # Predict probability of breakout
+    prob = model.predict_proba(X_input_scaled)[0][1]  # probability of class 1
+    return prob
