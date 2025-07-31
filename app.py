@@ -14,7 +14,7 @@ auto_scan = st.sidebar.checkbox("Auto-scan 100+ popular stocks over $5", value=F
 if "results" not in st.session_state:
     st.session_state["results"] = []
 
-# Display legend/key
+# Indicator key
 with st.expander("📘 Indicator Key"):
     st.markdown("""
 - **Breakout Score**: AI confidence (0–1) of breakout potential  
@@ -30,7 +30,10 @@ with st.expander("📘 Indicator Key"):
 run_scan = st.button("🚀 Run Scan")
 test_scan = st.button("🧪 Test on AAPL")
 
-# Scanner logic
+# Output container
+log_area = st.container()
+
+# Run scan
 if run_scan:
     if auto_scan:
         tickers = get_all_stocks_above_5_dollars()
@@ -43,12 +46,16 @@ if run_scan:
         st.stop()
 
     progress = st.progress(0.0, text="⏳ Starting scan...")
-    st.session_state["results"] = scan_stocks(tickers=tickers, update_progress=lambda p: progress.progress(p, text=f"🔎 Scanning... {int(p*100)}%"))
+    st.session_state["results"] = scan_stocks(
+        tickers=tickers,
+        update_progress=lambda p: progress.progress(p, text=f"🔎 Scanning... {int(p * 100)}%"),
+        st_log=log_area
+    )
     progress.empty()
 
 if test_scan:
     st.info("🧪 Scanning AAPL...")
-    st.session_state["results"] = scan_stocks(tickers=["AAPL"])
+    st.session_state["results"] = scan_stocks(tickers=["AAPL"], st_log=log_area)
 
 # Display results
 results = st.session_state["results"]
