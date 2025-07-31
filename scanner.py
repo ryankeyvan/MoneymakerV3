@@ -11,9 +11,9 @@ with open(MODEL_PATH, "rb") as f:
     model = pickle.load(f)
 
 # Tuned F1 threshold from train_model.py output
-F1_THRESHOLD = 0.143
+F1_THRESHOLD = 0.180
 
-# Simple in-memory cache
+# Simple in-memory cache for historical data
 data_cache = {}
 
 def get_stock_data(ticker, period="6mo", interval="1d"):
@@ -28,17 +28,17 @@ def compute_features(df):
     closes = df["Close"]
     returns = closes.pct_change().fillna(0)
     return np.array([
-        returns.iloc[-1],                     # yesterday
-        returns.iloc[-5:].mean(),             # 5d avg
-        returns.iloc[-20:].std(),             # 20d vol
-        df["Volume"].iloc[-1] / df["Volume"].iloc[-5:].mean()
+        returns.iloc[-1],                     # last-day return
+        returns.iloc[-5:].mean(),             # 5-day avg return
+        returns.iloc[-20:].std(),             # 20-day volatility
+        df["Volume"].iloc[-1] / df["Volume"].iloc[-5:].mean()  # volume spike ratio
     ])
 
 def scan_single_stock(ticker):
     try:
         df = get_stock_data(ticker)
         if df is None or df.empty:
-            return {"ticker": ticker, "error": "No data"}
+            return {"ticker": ticker, "error": "No data fetched"}
         feat = compute_features(df)
         proba = model.predict_proba([feat])[0][1]
         price = df["Close"].iloc[-1]
