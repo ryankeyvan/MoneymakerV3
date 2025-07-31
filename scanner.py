@@ -1,6 +1,7 @@
 # scanner.py
 import yfinance as yf
 import numpy as np
+import pandas as pd
 import pickle
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
@@ -9,7 +10,10 @@ MODEL_PATH = "models/breakout_model.pkl"
 with open(MODEL_PATH, "rb") as f:
     model = pickle.load(f)
 
+# Use the threshold your training script just printed
 F1_THRESHOLD = 0.180
+
+# Simple in-memory cache for historical data
 data_cache = {}
 
 def get_stock_data(ticker, period="6mo", interval="1d"):
@@ -24,10 +28,10 @@ def compute_features(df):
     closes = df["Close"]
     returns = closes.pct_change().fillna(0)
     return np.array([
-        returns.iloc[-1],
-        returns.iloc[-5:].mean(),
-        returns.iloc[-20:].std(),
-        df["Volume"].iloc[-1] / df["Volume"].iloc[-5:].mean()
+        returns.iloc[-1],                   # last-day return
+        returns.iloc[-5:].mean(),           # 5-day avg return
+        returns.iloc[-20:].std(),           # 20-day volatility
+        df["Volume"].iloc[-1] / df["Volume"].iloc[-5:].mean()  # volume spike
     ])
 
 def scan_single_stock(ticker):
@@ -35,16 +39,23 @@ def scan_single_stock(ticker):
         df = get_stock_data(ticker)
         if df is None or df.empty:
             return {"ticker": ticker, "error": "No data fetched"}
-        feat = compute_features(df).reshape(1, -1)    # ← ensure a 2D array
+
+        # Ensure we extract a single float, not a Series
+        closes = df["Close"]
+        if isinstance(closes, pd.DataFrame):
+            closes = closes[ticker]       # when yf.download returns multi-column
+        last_price = float(closes.iloc[-1])
+
+        feat = compute_features(df).reshape(1, -1)
         proba = model.predict_proba(feat)[0][1]
-        price = df["Close"].iloc[-1]
+
         return {
             "ticker": ticker,
-            "score": round(proba, 4),
+            "score": round(float(proba), 4),
             "decision": "BUY" if proba >= F1_THRESHOLD else "HOLD",
-            "current_price": round(price, 2),
-            "target_price": round(price * 1.10, 2),
-            "stop_loss": round(price * 0.95, 2)
+            "current_price": round(last_price, 2),
+            "target_price": round(last_price * 1.10, 2),
+            "stop_loss": round(last_price * 0.95, 2)
         }
     except Exception as e:
         return {"ticker": ticker, "error": str(e)}
@@ -63,9 +74,15 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python scanner.py TICKER1 TICKER2 …")
         sys.exit(1)
-    out, errs = scan_tickers(sys.argv[1:])
+
+    tickers = sys.argv[1:]
+    print(f"Starting scan of {len(tickers)} tickers… threshold={F1_THRESHOLD}\n")
+    results, errors = scan_tickers(tickers)
+
     print("\n=== RESULTS ===")
-    for r in out: print(r)
-    if errs:
+    for r in results:
+        print(r)
+    if errors:
         print("\n=== ERRORS ===")
-        for e in errs: print(e)
+        for e in errors:
+            print(e)
