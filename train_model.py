@@ -1,6 +1,6 @@
-import yfinance as yf
 import pandas as pd
 import numpy as np
+from alpha_vantage.timeseries import TimeSeries
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -9,56 +9,60 @@ import os
 from utils.preprocessing import preprocess_for_training
 
 # === CONFIG ===
+API_KEY = "JMOVPJWW0ZA4ASVW"  # Your Alpha Vantage API key
 TICKERS = [
     "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "GOOG", "META", "NFLX", "ORCL",
     "BABA", "DIS", "BAC", "NKE", "CRM", "INTC", "CSCO", "IBM", "QCOM",
     "ADBE", "TXN", "AVGO", "PYPL", "AMZN", "WMT", "V", "MA", "JNJ", "PG",
     "XOM", "CVX", "KO", "PFE", "MRK", "T", "VZ", "MCD"
 ]
-FUTURE_DAYS = 3
+FUTURE_DAYS = 5
 BREAKOUT_THRESHOLD = 1.10  # 10% rise = breakout
 
-def fetch_and_prepare(ticker, future_days=FUTURE_DAYS):
-    df = yf.download(ticker, period="3y", interval="1d", auto_adjust=False)
+# Initialize Alpha Vantage API client
+ts = TimeSeries(key=API_KEY, output_format='pandas')
 
-    # Flatten multi-index columns if they exist (fixes KeyError on columns)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
-
-    if df.empty or len(df) < future_days + 1:
-        print(f"⚠️ Not enough data for {ticker}")
-        return None
-
-    df["future_max"] = df["Close"].rolling(window=future_days).max().shift(-future_days)
-    df = df.dropna(subset=["future_max", "Close"])
-
-    if df.empty:
-        print(f"⚠️ No valid labeled data for {ticker} after processing")
-        return None
-
-    return df
+def fetch_data_alpha(ticker):
+    print(f"📈 Fetching {ticker} from Alpha Vantage...")
+    try:
+        data, _ = ts.get_daily(symbol=ticker, outputsize='full')
+        data.rename(columns={
+            '1. open': 'Open',
+            '2. high': 'High',
+            '3. low': 'Low',
+            '4. close': 'Close',
+            '5. volume': 'Volume'
+        }, inplace=True)
+        data = data.sort_index()
+        return data[["Open", "High", "Low", "Close", "Volume"]].dropna()
+    except Exception as e:
+        print(f"❌ Error fetching {ticker}: {e}")
+        return pd.DataFrame()
 
 X_all = []
 y_all = []
 
-print("📊 Starting model training using yfinance...")
+print("📊 Starting model training...")
 
 for ticker in TICKERS:
-    print(f"📈 Fetching {ticker} from yfinance...")
-    try:
-        df = fetch_and_prepare(ticker)
-        if df is None:
-            continue
+    df = fetch_data_alpha(ticker)
 
-        # Preprocess features and get processed df
+    if df.empty:
+        print(f"⚠️ Skipping {ticker}: No usable data.")
+        continue
+
+    df["future_max"] = df["Close"].rolling(window=FUTURE_DAYS).max().shift(-FUTURE_DAYS)
+    df = df.dropna(subset=["future_max", "Close"])
+
+    if df.empty:
+        print(f"⚠️ Skipping {ticker}: Not enough labeled data.")
+        continue
+
+    try:
         X_scaled, df_processed = preprocess_for_training(df)
 
-        # Align y with X_scaled length
         df_processed = df_processed.tail(len(X_scaled))
-
-        y = (df_processed["future_max"].values.flatten() > df_processed["Close"].values.flatten() * BREAKOUT_THRESHOLD).astype(int)
+        y = (df_processed["future_max"].values > df_processed["Close"].values * BREAKOUT_THRESHOLD).astype(int)
 
         if len(X_scaled) != len(y):
             print(f"❌ Length mismatch for {ticker}")
@@ -75,10 +79,22 @@ for ticker in TICKERS:
 if not X_all:
     raise RuntimeError("❌ No data available for training.")
 
+# Audit breakout label distribution
+y_array = np.array(y_all)
+unique, counts = np.unique(y_array, return_counts=True)
+label_counts = dict(zip(unique, counts))
+print("\n📊 Breakout label distribution in training data:")
+print(label_counts)
+
+# Sample label and feature printout
+print("\nSample training labels and features:")
+for i in range(5):
+    print(f"Label: {y_all[i]}, Features (first 5): {X_all[i][:5]}")
+
 print("\n🧠 Training MLP model...")
 X_train, X_test, y_train, y_test = train_test_split(X_all, y_all, test_size=0.2, random_state=42)
 
-model = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=300, random_state=42)
+model = MLPClassifier(hidden_layer_sizes=(128, 64), max_iter=500, solver='adam', random_state=42)
 model.fit(X_train, y_train)
 
 os.makedirs("models", exist_ok=True)
