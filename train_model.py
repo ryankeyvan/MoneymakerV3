@@ -4,61 +4,70 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report
 import joblib
 import os
 
-# Constants
-TICKER = "AAPL"
-START_DATE = "2018-01-01"
+TICKERS = ["AAPL", "NVDA", "AMD", "MSFT", "TSLA", "GOOGL"]
+START_DATE = "2020-01-01"
 END_DATE = "2024-12-31"
-BREAKOUT_THRESHOLD = 0.10  # 10% gain in next 7 days
+BREAKOUT_THRESHOLD = 0.1
+MODEL_DIR = "models"
+os.makedirs(MODEL_DIR, exist_ok=True)
 
-# Ensure models directory exists
-os.makedirs("models", exist_ok=True)
+def label_breakouts(df, threshold=BREAKOUT_THRESHOLD, window=5):
+    df["future_max"] = df["Close"].rolling(window=window, min_periods=1).max().shift(-window)
+    df["label"] = (df["future_max"] > df["Close"] * (1 + threshold)).astype(int)
+    df.dropna(inplace=True)
+    return df
 
-# --- 1. Fetch historical data ---
-print(f"Fetching {TICKER}...")
-df = yf.download(TICKER, start=START_DATE, end=END_DATE)
+def extract_features(df):
+    df["volume_ratio"] = df["Volume"] / df["Volume"].rolling(5).mean()
+    df["momentum"] = df["Close"] / df["Close"].shift(5)
+    df["rsi"] = compute_rsi(df["Close"], 14)
+    return df[["volume_ratio", "momentum", "rsi", "label"]].dropna()
 
-# --- 2. Feature engineering ---
-df["returns"] = df["Close"].pct_change()
-df["volume_ratio"] = df["Volume"] / df["Volume"].rolling(14).mean()
-df["momentum"] = df["Close"].pct_change(periods=14)
-delta = df["Close"].diff()
-gain = delta.where(delta > 0, 0)
-loss = -delta.where(delta < 0, 0)
-avg_gain = gain.rolling(14).mean()
-avg_loss = loss.rolling(14).mean()
-rs = avg_gain / avg_loss
-df["rsi"] = 100 - (100 / (1 + rs))
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
 
-# --- 3. Label future breakouts ---
-def label_breakouts(data, threshold=BREAKOUT_THRESHOLD):
-    data = data.copy()
-    data["future_max"] = data["Close"].shift(-1).rolling(7).max()
-    data = data.dropna(subset=["future_max", "Close"])  # Ensure no missing values
-    data["label"] = (data["future_max"] > data["Close"] * (1 + threshold)).astype(int)
-    return data
+all_data = []
 
-df = label_breakouts(df)
+for ticker in TICKERS:
+    print(f"Fetching {ticker}...")
+    df = yf.download(ticker, start=START_DATE, end=END_DATE)
+    if df.empty or "Close" not in df.columns:
+        print(f"Skipping {ticker}, no data.")
+        continue
+    df = label_breakouts(df)
+    features = extract_features(df)
+    features["ticker"] = ticker
+    all_data.append(features)
 
-# --- 4. Drop rows with missing features ---
-df = df.dropna(subset=["volume_ratio", "momentum", "rsi"])
+if not all_data:
+    raise ValueError("No data collected for training.")
 
-# --- 5. Prepare training data ---
-X = df[["volume_ratio", "momentum", "rsi"]]
-y = df["label"]
+full_data = pd.concat(all_data)
 
-# --- 6. Scale and train model ---
+X = full_data[["volume_ratio", "momentum", "rsi"]]
+y = full_data["label"]
+
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
 model = RandomForestClassifier(n_estimators=100, random_state=42)
 model.fit(X_scaled, y)
 
-# --- 7. Save model and scaler ---
-joblib.dump(model, "models/breakout_model.pkl")
-joblib.dump(scaler, "models/scaler.pkl")
+print("✅ Training complete.\n")
+print(classification_report(y, model.predict(X_scaled)))
 
-print("✅ Model and scaler saved!")
+joblib.dump(model, os.path.join(MODEL_DIR, "breakout_model.pkl"))
+joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.pkl"))
+print("✅ Model and scaler saved to /models/")
