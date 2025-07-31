@@ -4,9 +4,9 @@ import numpy as np
 import joblib
 import os
 
-# Load trained model and scaler
-model_path = "models/breakout_model.pkl"
-scaler_path = "models/scaler.pkl"
+# Load trained model and scaler from root directory
+model_path = os.path.join(os.path.dirname(__file__), "model.pkl")
+scaler_path = os.path.join(os.path.dirname(__file__), "scaler.pkl")
 
 if not os.path.exists(model_path) or not os.path.exists(scaler_path):
     raise FileNotFoundError("❌ Trained model or scaler not found. Run train_model.py first.")
