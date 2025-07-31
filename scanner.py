@@ -1,56 +1,27 @@
+# scanner.py (test only)
 import yfinance as yf
 import numpy as np
 import pandas as pd
-from ta.momentum import RSIIndicator
-from utils.sentiment import get_sentiment_score
-from ml_model import predict_breakout
-import time
 
-def get_all_stocks_above_5_dollars():
-    return [
-        "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "NFLX", "V", "MA",
-        "CRM", "ADBE", "INTC", "AMD", "AVGO", "QCOM", "CSCO", "ORCL", "SHOP", "UBER",
-        "PYPL", "SQ", "COIN", "PLTR", "SNOW", "NET", "DDOG", "ZS", "PANW", "CRWD", "DOCU",
-        "ROKU", "TWLO", "SPOT", "ABNB", "RBLX", "NKE", "LULU", "DIS", "WMT", "TGT",
-        "HD", "LOW", "COST", "SBUX", "MCD", "CMG", "EL", "KO", "PEP", "PM",
-        "XOM", "CVX", "COP", "SLB", "OXY", "HAL", "PSX", "MPC", "PXD", "FANG",
-        "JPM", "BAC", "WFC", "GS", "MS", "SCHW", "AXP", "C", "USB", "TD",
-        "UNH", "JNJ", "PFE", "LLY", "MRK", "BMY", "VRTX", "REGN", "CVS", "CI",
-        "TMO", "ISRG", "DHR", "ZBH", "BDX", "GE", "CAT", "DE", "HON", "BA",
-        "LMT", "NOC", "RTX", "FDX", "UPS", "DAL", "UAL", "F", "GM", "RIVN"
-    ]
-
-def scan_stocks(tickers=None, auto=False):
+def scan_stocks(tickers=["AAPL"], auto=False):
     results = []
-
-    if auto or tickers is None:
-        tickers = get_all_stocks_above_5_dollars()
-
     for ticker in tickers:
         try:
-            time.sleep(0.5)
             print(f"📡 Scanning {ticker}")
             data = yf.download(ticker, period="3mo", interval="1d", progress=False)
-            if data.empty or len(data) < 14:
-                print(f"⚠️ Skipping {ticker}: not enough data")
+            if data.empty:
+                print(f"⚠️ No data for {ticker}")
                 continue
 
-            recent_data = data.tail(14)
-            rsi = RSIIndicator(close=recent_data["Close"]).rsi().iloc[-1]
-            momentum = recent_data["Close"].iloc[-1] / recent_data["Close"].iloc[0] - 1
-            volume_change = (recent_data["Volume"].iloc[-1] - recent_data["Volume"].mean()) / recent_data["Volume"].mean() * 100
-            current_price = recent_data["Close"].iloc[-1]
+            close_prices = data["Close"]
+            volume = data["Volume"]
 
-            sentiment_score = get_sentiment_score(ticker)
-            breakout_score = predict_breakout(
-                volume_ratio=recent_data["Volume"].iloc[-1] / recent_data["Volume"].mean(),
-                price_momentum=momentum + 1,
-                rsi=rsi
-            )
+            price_momentum = close_prices.iloc[-1] / close_prices.iloc[0]
+            volume_ratio = volume.iloc[-1] / volume.mean()
+            rsi = 50  # fake RSI for test
 
-            if np.isnan(breakout_score):
-                print(f"⚠️ {ticker} returned invalid breakout score")
-                continue
+            breakout_score = (price_momentum + volume_ratio + rsi/100) / 3
+            current_price = close_prices.iloc[-1]
 
             result = {
                 "Ticker": ticker,
@@ -58,18 +29,18 @@ def scan_stocks(tickers=None, auto=False):
                 "Breakout Score": round(breakout_score, 3),
                 "Target Price": round(current_price * 1.15, 2),
                 "Stop Loss": round(current_price * 0.93, 2),
-                "RSI": round(rsi, 2),
-                "Momentum": round(momentum * 100, 2),
-                "Volume Change": round(volume_change, 2),
-                "Sentiment Score": sentiment_score
+                "RSI": rsi,
+                "Momentum": round((price_momentum - 1) * 100, 2),
+                "Volume Change": round((volume.iloc[-1] - volume.mean()) / volume.mean() * 100, 2),
+                "Sentiment Score": 0.5
             }
 
-            print(f"✅ Added {ticker}: {result}")
+            print(f"✅ {ticker} result:", result)
             results.append(result)
 
         except Exception as e:
             print(f"❌ Error scanning {ticker}: {e}")
             continue
 
-    print("🔎 TOTAL STOCKS FOUND:", len(results))
+    print(f"🔎 Total results: {len(results)}")
     return results
