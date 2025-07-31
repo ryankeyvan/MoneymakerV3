@@ -1,49 +1,57 @@
+# scanner.py
+
 import yfinance as yf
-import numpy as np
 import pandas as pd
+import numpy as np
+import datetime
+from ta.momentum import RSIIndicator
 from ml_model import predict_breakout
 
 def scan_stocks(tickers):
     results = []
+    end = datetime.datetime.now()
+    start = end - datetime.timedelta(days=90)
 
     for ticker in tickers:
         try:
-            data = yf.download(ticker, period="3mo", interval="1d", progress=False)
-            if data.empty:
-                results.append({"Ticker": ticker, "Error": "No data"})
+            print(f"🔎 Scanning {ticker}...")
+            data = yf.download(ticker, start=start, end=end, progress=False)
+
+            if data.empty or len(data) < 20:
+                print(f"⚠️ No data for {ticker}")
                 continue
 
-            volume = data['Volume'].values
-            close = data['Close'].values
-            if len(volume) < 20 or len(close) < 20:
-                results.append({"Ticker": ticker, "Error": "Insufficient data"})
-                continue
+            close = data['Close'].values.flatten()
+            volume = data['Volume'].values.flatten()
 
-            # Feature engineering
-            avg_vol = np.mean(volume[-20:])
-            volume_ratio = volume[-1] / avg_vol if avg_vol != 0 else 0
-            price_momentum = close[-1] / close[-5] if close[-5] != 0 else 0
+            # Price momentum (today's close / 5-day average)
+            price_momentum = close[-1] / np.mean(close[-5:])
 
-            delta = pd.Series(close).diff()
-            gain = np.where(delta > 0, delta, 0)
-            loss = np.where(delta < 0, -delta, 0)
-            avg_gain = pd.Series(gain).rolling(window=14).mean()
-            avg_loss = pd.Series(loss).rolling(window=14).mean()
-            rs = avg_gain / avg_loss
-            rsi_series = 100 - (100 / (1 + rs))
-            rsi = rsi_series.iloc[-1] if not rsi_series.empty else 50
+            # Volume ratio (today's volume / 20-day avg volume)
+            volume_ratio = volume[-1] / np.mean(volume[-20:])
 
+            # RSI calculation
+            rsi_series = RSIIndicator(pd.Series(close)).rsi()
+            rsi = rsi_series.values.flatten()[-1]
+
+            # Predict breakout score (0 to 1)
             breakout_score = predict_breakout(volume_ratio, price_momentum, rsi)
 
+            # Build result
             results.append({
-                "Ticker": ticker,
-                "Breakout Score": float(breakout_score),
-                "Target Price": None,  # Optional: you can add calc here
-                "Stop Loss": None,
-                "Sentiment": "very positive" if breakout_score > 0.7 else "neutral"
+                'Ticker': ticker,
+                'Breakout Score': float(breakout_score),
+                'Volume Ratio': round(volume_ratio, 2),
+                'Momentum': round(price_momentum, 2),
+                'RSI': round(rsi, 2),
+                'Sentiment': 'N/A',  # Optional bonus: integrate Twitter/X later
+                'Target Price': 'N/A',  # Optional: could add ML model here
+                'Stop Loss': 'N/A',  # Optional: ATR-based stop loss later
+                'Buy Signal': breakout_score >= 0.7
             })
 
         except Exception as e:
-            results.append({"Ticker": ticker, "Error": str(e)})
+            print(f"❌ Error with {ticker}: {e}")
+            continue
 
     return results
