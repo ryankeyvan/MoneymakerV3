@@ -1,22 +1,44 @@
-# evaluate.py
-import os, pickle, json
+#!/usr/bin/env python3
+import os, sys, pickle, json
 import pandas as pd
 from sklearn.metrics import classification_report, roc_auc_score
 
-MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
-models = {h: pickle.load(open(os.path.join(MODELS_DIR,f'breakout_model_{h}.pkl'),'rb'))
-          for h in ['1w','1m','3m']}
+# — point this at your models folder —
+HERE       = os.path.dirname(__file__)
+MODELS_DIR = os.path.join(HERE, 'models')
+
+def load_model(name):
+    path = os.path.join(MODELS_DIR, name)
+    with open(path, 'rb') as f:
+        return pickle.load(f)
+
+models = {
+    '1w': load_model('breakout_model_1w.pkl'),
+    '1m': load_model('breakout_model_1m.pkl'),
+    '3m': load_model('breakout_model_3m.pkl'),
+}
 
 def evaluate_horizon(h):
-    X = pd.read_csv(f'{MODELS_DIR}/test_features_{h}.csv').values
-    y = pd.read_csv(f'{MODELS_DIR}/test_labels_{h}.csv')['label'].values
-    m = models[h]
-    y_pred = m.predict(X)
-    y_proba = m.predict_proba(X)[:,1]
-    print(f"\n=== {h} Performance ===")
-    print(classification_report(y, y_pred, target_names=['HOLD','BUY']))
-    print("ROC AUC:", round(roc_auc_score(y, y_proba),4))
+    feat_f = os.path.join(MODELS_DIR, f"test_features_{h}.csv")
+    labl_f = os.path.join(MODELS_DIR, f"test_labels_{h}.csv")
 
-if __name__=='__main__':
-    for h in ['1w','1m','3m']:
-        evaluate_horizon(h)
+    if not os.path.exists(feat_f) or not os.path.exists(labl_f):
+        print(f"\n❌ Missing test files for horizon '{h}'.")
+        print(f"   → Looking for:\n     {feat_f}\n     {labl_f}")
+        print("   Run your training script with test‐CSV export turned on, then try again.\n")
+        return
+
+    X_test = pd.read_csv(feat_f).values
+    y_test = pd.read_csv(labl_f)['label'].values
+
+    m       = models[h]
+    y_pred  = m.predict(X_test)
+    y_proba = m.predict_proba(X_test)[:,1]
+
+    print(f"\n=== {h} Model Performance ===")
+    print(classification_report(y_test, y_pred, target_names=['HOLD','BUY']))
+    print("ROC AUC:", round(roc_auc_score(y_test, y_proba),4))
+
+if __name__ == '__main__':
+    for horizon in ['1w','1m','3m']:
+        evaluate_horizon(horizon)
