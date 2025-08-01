@@ -2,6 +2,7 @@
 import os
 import json
 import pickle
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -11,19 +12,22 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score
 from tqdm import tqdm
 
+# suppress that “float(Series)” FutureWarning
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 SCRIPT_DIR = os.path.dirname(__file__)
 MODELS_DIR = os.path.join(SCRIPT_DIR, 'models')
 os.makedirs(MODELS_DIR, exist_ok=True)
 
-# Define horizons in trading days
+# trading‐day horizons
 HORIZONS = {'1w': 5, '1m': 21, '3m': 63}
 FEATURE_COLS = ['Open', 'High', 'Low', 'Close']
 
 
 def get_sp500_tickers():
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-    table = pd.read_html(url, header=0)[0]
-    return table['Symbol'].str.replace('.', '-', regex=False).tolist()
+    df = pd.read_html(url, header=0)[0]
+    return df['Symbol'].str.replace('.', '-', regex=False).tolist()
 
 
 def build_dataset(tickers, years=3):
@@ -33,10 +37,8 @@ def build_dataset(tickers, years=3):
         if df.shape[0] < max(HORIZONS.values()) + 1:
             continue
 
-        # keep just OHLC
         df = df[FEATURE_COLS].dropna()
-
-        # compute future rolling max for each horizon
+        # compute future rolling max
         for h_key, h_days in HORIZONS.items():
             df[f'future_max_{h_key}'] = (
                 df['Close']
@@ -44,17 +46,18 @@ def build_dataset(tickers, years=3):
                   .max()
                   .shift(-h_days)
             )
-
         df = df.dropna()
 
-        # each row → one training example
+        # flatten into rows
         for idx, row in df.iterrows():
             feats = row[FEATURE_COLS].values.astype(float)
-            # scalar comparison, never Series
-            labels = {
-                h_key: int(float(row[f'future_max_{h_key}']) > float(row['Close']))
-                for h_key in HORIZONS
-            }
+            # use .item() to grab scalar, no warnings
+            close_val = row['Close'].item()
+            labels = {}
+            for h_key in HORIZONS:
+                fut_val = row[f'future_max_{h_key}'].item()
+                labels[h_key] = int(fut_val > close_val)
+
             rows.append({
                 'ticker': ticker,
                 'date': idx,
@@ -89,7 +92,7 @@ def train_and_tune():
         clf = RandomForestClassifier(n_estimators=200, random_state=42)
         clf.fit(X_train_s, y_train[h_key])
 
-        # find best threshold by F1 on test set
+        # tune threshold on test by F1
         probs = clf.predict_proba(X_test_s)[:, 1]
         best_thr, best_f1 = 0.5, 0.0
         for thr in np.linspace(0, 1, 101):
@@ -99,21 +102,18 @@ def train_and_tune():
                 best_f1, best_thr = f1, thr
 
         thresholds[h_key] = best_thr
-
         # save model
-        mpath = os.path.join(MODELS_DIR, f'breakout_model_{h_key}.pkl')
-        pickle.dump(clf, open(mpath, 'wb'))
+        pickle.dump(clf, open(os.path.join(MODELS_DIR, f'breakout_model_{h_key}.pkl'), 'wb'))
 
-        # export test features & labels
+        # export test CSVs for evaluate.py
         feat_df = pd.DataFrame(X_test, columns=FEATURE_COLS)
         feat_df.to_csv(os.path.join(MODELS_DIR, f'test_features_{h_key}.csv'), index=False)
+        pd.DataFrame({'label': y_test[h_key]}) \
+          .to_csv(os.path.join(MODELS_DIR, f'test_labels_{h_key}.csv'), index=False)
 
-        label_df = pd.DataFrame({'label': y_test[h_key]})
-        label_df.to_csv(os.path.join(MODELS_DIR, f'test_labels_{h_key}.csv'), index=False)
+        print(f"Horizon {h_key}: best F1 = {best_f1:.4f} @ threshold = {best_thr:.3f}")
 
-        print(f"Horizon {h_key}: best F1 = {best_f1:.4f} @ thr = {best_thr:.3f}")
-
-    # write thresholds
+    # persist thresholds.json
     with open(os.path.join(MODELS_DIR, 'thresholds.json'), 'w') as f:
         json.dump(thresholds, f, indent=2)
 
