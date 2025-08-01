@@ -1,92 +1,73 @@
-import yfinance as yf
-import numpy as np
+#!/usr/bin/env python3
+import os
+import json
+import pickle
+
 import pandas as pd
-from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score
-import pickle, json, os
 
-# Tickers for model training; extend as needed
-TICKERS = [
-    "AAPL","MSFT","NVDA","GOOG","AMZN",
-    "TSLA","META","NFLX","IBM","ORCL",
-    # ... add more symbols to strengthen training
-]
+# — adjust these paths if you like —
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
+DATA_DIR   = os.path.join(SCRIPT_DIR, "data")  # expect your CSVs here
 
-# Horizon definitions: lookahead days and breakout threshold pct
-HORIZONS = {
-    "1w": {"lookahead": 5, "pct": 0.10},
-    "1m": {"lookahead": 21, "pct": 0.15},
-    "3m": {"lookahead": 63, "pct": 0.30},
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+# how many trading days ahead to label as "breakout"
+horizons = {
+    "1w": 5,    # 1 week ≈ 5 trading days
+    "1m": 22,   # 1 month ≈ 22 trading days
+    "3m": 66    # 3 months ≈ 66 trading days
 }
 
-# Ensure models directory
-os.makedirs("models", exist_ok=True)
+thresholds = {}
 
-# Fetch price history
-def fetch_data(ticker, period="1y", interval="1d"):
-    return yf.download(ticker, period=period, interval=interval, progress=False)
+for h, days_ahead in horizons.items():
+    # == load your pre-made dataset ==
+    # we assume you have CSVs named like data/dataset_1w.csv
+    # each with columns Open, High, Low, Close, Breakout (0/1 label for that horizon)
+    src = os.path.join(DATA_DIR, f"dataset_{h}.csv")
+    print(f"→ Loading {src}")
+    df = pd.read_csv(src)
 
-# Compute features & labels for each horizon
-def compute_features_and_labels(df, lookahead, breakout_pct):
-    closes = df['Close']
-    returns = closes.pct_change().fillna(0)
-    vol = df['Volume']
-    feats, labs = [], []
-    for i in range(20, len(df) - lookahead):
-        window = returns.iloc[i-20:i]
-        feat = [
-            returns.iloc[i],                   # last-day return
-            window[-5:].mean(),                # 5-day average return
-            window.std(),                      # 20-day volatility
-            vol.iloc[i] / vol.iloc[i-5:i].mean()  # volume spike ratio
-        ]
-        future_max = (closes.iloc[i+1:i+1+lookahead] / closes.iloc[i] - 1).max()
-        label = int(future_max >= breakout_pct)
-        feats.append(feat)
-        labs.append(label)
-    return np.array(feats), np.array(labs)
+    # features & label
+    X = df[["Open", "High", "Low", "Close"]].values
+    y = df["Breakout"].values
 
-# Collect and train models per horizon
-def train_models():
-    thresholds = {}
-    for name, cfg in HORIZONS.items():
-        all_X, all_y = [], []
-        for ticker in TICKERS:
-            df = fetch_data(ticker)
-            if df is None or df.empty:
-                print(f"⚠️ Skipping {ticker} for {name}: no data")
-                continue
-            X, y = compute_features_and_labels(df, cfg['lookahead'], cfg['pct'])
-            if X.size and y.size:
-                all_X.append(X)
-                all_y.append(y)
-        if not all_X:
-            print(f"⚠️ No training data for horizon {name}")
-            continue
-        X = np.vstack(all_X).reshape(-1, all_X[0].shape[1])
-        y = np.concatenate(all_y)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
-        )
-        model = MLPClassifier(hidden_layer_sizes=(50,25), activation='relu', solver='adam',
-                              max_iter=500, random_state=42)
-        model.fit(X_train, y_train)
-        probs = model.predict_proba(X_test)[:,1]
-        best_thr, best_f1 = 0.0, 0.0
-        for thr in np.linspace(0,1,101):
-            preds = (probs >= thr).astype(int)
-            f1 = f1_score(y_test, preds)
-            if f1 > best_f1:
-                best_f1, best_thr = f1, thr
-        thresholds[name] = best_thr
-        with open(f"models/breakout_{name}.pkl", "wb") as f:
-            pickle.dump(model, f)
-        print(f"✅ Trained {name}: F1={best_f1:.4f} @ thr={best_thr:.3f}")
-    # Save thresholds
-    with open("models/thresholds.json", "w") as f:
-        json.dump(thresholds, f)
-    print("✅ All models trained and thresholds saved.")
+    # train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
-if __name__ == "__main__":
-    train_models()
+    # train a simple RF
+    model = RandomForestClassifier(
+        n_estimators=100, random_state=42, n_jobs=-1
+    )
+    print(f"→ Training model for {h}")
+    model.fit(X_train, y_train)
+
+    # save the model
+    mpath = os.path.join(MODELS_DIR, f"breakout_model_{h}.pkl")
+    with open(mpath, "wb") as f:
+        pickle.dump(model, f)
+    print(f"   saved model → {mpath}")
+
+    # save test features & labels so evaluate.py can find them
+    tf = pd.DataFrame(X_test, columns=["Open", "High", "Low", "Close"])
+    lf = pd.DataFrame(y_test, columns=["Breakout"])
+    feat_path = os.path.join(MODELS_DIR, f"test_features_{h}.csv")
+    label_path = os.path.join(MODELS_DIR, f"test_labels_{h}.csv")
+    tf.to_csv(feat_path, index=False)
+    lf.to_csv(label_path, index=False)
+    print(f"   saved test features → {feat_path}")
+    print(f"   saved test labels   → {label_path}")
+
+    # choose 0.5 as a default cutoff
+    thresholds[h] = 0.5
+
+# write out thresholds.json
+tpath = os.path.join(MODELS_DIR, "thresholds.json")
+with open(tpath, "w") as f:
+    json.dump(thresholds, f, indent=2)
+print(f"✔ Done. thresholds → {tpath}")
