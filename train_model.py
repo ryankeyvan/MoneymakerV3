@@ -3,6 +3,7 @@ import os
 import json
 import pickle
 import warnings
+import time
 
 import numpy as np
 import pandas as pd
@@ -12,14 +13,14 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score
 from tqdm import tqdm
 
-# suppress that “float(Series)” FutureWarning
+# suppress that FutureWarning about float(Series)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 SCRIPT_DIR = os.path.dirname(__file__)
 MODELS_DIR = os.path.join(SCRIPT_DIR, 'models')
 os.makedirs(MODELS_DIR, exist_ok=True)
 
-# trading‐day horizons
+# trading‑day horizons
 HORIZONS = {'1w': 5, '1m': 21, '3m': 63}
 FEATURE_COLS = ['Open', 'High', 'Low', 'Close']
 
@@ -51,12 +52,11 @@ def build_dataset(tickers, years=3):
         # flatten into rows
         for idx, row in df.iterrows():
             feats = row[FEATURE_COLS].values.astype(float)
-            # use .item() to grab scalar, no warnings
             close_val = row['Close'].item()
-            labels = {}
-            for h_key in HORIZONS:
-                fut_val = row[f'future_max_{h_key}'].item()
-                labels[h_key] = int(fut_val > close_val)
+            labels = {
+                h_key: int(row[f'future_max_{h_key}'].item() > close_val)
+                for h_key in HORIZONS
+            }
 
             rows.append({
                 'ticker': ticker,
@@ -74,6 +74,7 @@ def build_dataset(tickers, years=3):
 def train_and_tune():
     tickers = get_sp500_tickers()
     X, y = build_dataset(tickers)
+    print(f"Dataset built with {len(X)} samples.")
 
     # 80/20 split
     split = int(0.8 * len(X))
@@ -89,10 +90,18 @@ def train_and_tune():
 
     thresholds = {}
     for h_key in HORIZONS:
-        clf = RandomForestClassifier(n_estimators=200, random_state=42)
+        print(f"\nTraining model for horizon '{h_key}'...")
+        start = time.time()
+        clf = RandomForestClassifier(
+            n_estimators=200,
+            random_state=42,
+            n_jobs=-1
+        )
         clf.fit(X_train_s, y_train[h_key])
+        duration = time.time() - start
+        print(f"Model for {h_key} trained in {duration:.1f}s.")
 
-        # tune threshold on test by F1
+        # tune threshold by maximizing F1 on test set
         probs = clf.predict_proba(X_test_s)[:, 1]
         best_thr, best_f1 = 0.5, 0.0
         for thr in np.linspace(0, 1, 101):
@@ -100,24 +109,21 @@ def train_and_tune():
             f1 = f1_score(y_test[h_key], preds)
             if f1 > best_f1:
                 best_f1, best_thr = f1, thr
-
         thresholds[h_key] = best_thr
-        # save model
-        pickle.dump(clf, open(os.path.join(MODELS_DIR, f'breakout_model_{h_key}.pkl'), 'wb'))
+        print(f"Best F1 for {h_key}: {best_f1:.4f} at threshold {best_thr:.3f}")
 
-        # export test CSVs for evaluate.py
-        feat_df = pd.DataFrame(X_test, columns=FEATURE_COLS)
-        feat_df.to_csv(os.path.join(MODELS_DIR, f'test_features_{h_key}.csv'), index=False)
+        # save model & export test CSVs
+        pickle.dump(clf, open(os.path.join(MODELS_DIR, f'breakout_model_{h_key}.pkl'), 'wb'))
+        pd.DataFrame(X_test, columns=FEATURE_COLS) \
+          .to_csv(os.path.join(MODELS_DIR, f'test_features_{h_key}.csv'), index=False)
         pd.DataFrame({'label': y_test[h_key]}) \
           .to_csv(os.path.join(MODELS_DIR, f'test_labels_{h_key}.csv'), index=False)
 
-        print(f"Horizon {h_key}: best F1 = {best_f1:.4f} @ threshold = {best_thr:.3f}")
-
-    # persist thresholds.json
+    # persist thresholds
     with open(os.path.join(MODELS_DIR, 'thresholds.json'), 'w') as f:
         json.dump(thresholds, f, indent=2)
 
-    print("✅ Training complete. Models, scaler, thresholds, and test CSVs are in /models.")
+    print("\n✅ Training complete. Models, scaler, thresholds, and test CSVs are in /models.")
 
 
 if __name__ == "__main__":
