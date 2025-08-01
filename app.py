@@ -4,7 +4,7 @@ import pandas as pd
 import yfinance as yf
 import matplotlib.pyplot as plt
 from datetime import datetime
-from scanner import scan_tickers
+from scanner import scan_tickers, get_sp500_tickers
 
 st.set_page_config(page_title="MoneyMakerV3 AI Stock Breakout", layout="wide")
 st.title("💰 MoneyMakerV3 AI Stock Breakout Assistant")
@@ -12,7 +12,9 @@ st.title("💰 MoneyMakerV3 AI Stock Breakout Assistant")
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = []
 
-# Sidebar
+#
+# ─── SIDEBAR ────────────────────────────────────────────────────────────────────
+#
 st.sidebar.header("🍽️ Watchlist")
 inp = st.sidebar.text_input("Add tickers (comma separated)")
 if st.sidebar.button("Add"):
@@ -24,19 +26,29 @@ if st.sidebar.button("Clear"):
     st.sidebar.info("Watchlist cleared.")
 st.sidebar.write("**Current:**", st.session_state.watchlist)
 
-# Scanner UI
-st.subheader("📈 Stock Scanner")
-use_wl = st.checkbox("Use watchlist", value=True)
-if use_wl:
-    tickers = st.session_state.watchlist
+# Option to run a full S&P 500 scan
+scan_sp500 = st.sidebar.checkbox("Scan entire S&P 500", value=False)
+if scan_sp500:
+    tickers = get_sp500_tickers()
+    st.sidebar.info(f"Scanning {len(tickers)} tickers… this can take several minutes!")
 else:
-    tickers = [t.strip().upper() for t in st.text_input("Tickers to scan").split(",") if t.strip()]
-
-if st.button("Run Scan"):
-    if not tickers:
-        st.warning("No tickers provided.")
+    use_wl = st.sidebar.checkbox("Use watchlist", value=True)
+    if use_wl:
+        tickers = st.session_state.watchlist
     else:
-        with st.spinner("Scanning…"):
+        raw = st.sidebar.text_input("Tickers to scan (comma separated)")
+        tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
+
+#
+# ─── MAIN ────────────────────────────────────────────────────────────────────────
+#
+st.subheader("📈 Stock Scanner")
+run = st.button("Run Scan")
+if run:
+    if not tickers:
+        st.warning("No tickers provided. Either add to your watchlist, paste tickers, or check “Scan entire S&P 500.”")
+    else:
+        with st.spinner(f"Scanning {len(tickers)} tickers…"):
             results, failures = scan_tickers(tickers)
 
         df = pd.DataFrame(results)
@@ -53,7 +65,7 @@ if st.button("Run Scan"):
             st.subheader("⚠️ Failures")
             st.write(failures)
 
-        # Only show chart if we have results
+        # Price chart for a chosen ticker
         if not df.empty:
             st.subheader("📊 Price Chart")
             choice = st.selectbox("Select ticker", df["ticker"].tolist())
