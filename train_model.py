@@ -6,7 +6,6 @@ import pickle
 import numpy as np
 import pandas as pd
 import yfinance as yf
-
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score
@@ -33,24 +32,35 @@ def build_dataset(tickers, years=3):
         df = yf.download(ticker, period=f"{years}y", interval="1d", progress=False)
         if df.shape[0] < max(HORIZONS.values()) + 1:
             continue
+
+        # keep just OHLC
         df = df[FEATURE_COLS].dropna()
-        # compute future max for each horizon
+
+        # compute future rolling max for each horizon
         for h_key, h_days in HORIZONS.items():
             df[f'future_max_{h_key}'] = (
                 df['Close']
-                  .rolling(window=h_days+1, min_periods=h_days+1)
+                  .rolling(window=h_days + 1, min_periods=h_days + 1)
                   .max()
                   .shift(-h_days)
             )
+
         df = df.dropna()
-        # flatten into row‐wise examples
+
+        # each row → one training example
         for idx, row in df.iterrows():
-            feat = row[FEATURE_COLS].values
+            feats = row[FEATURE_COLS].values.astype(float)
+            # scalar comparison, never Series
             labels = {
-                h_key: int(row[f'future_max_{h_key}'] > row['Close'])
+                h_key: int(float(row[f'future_max_{h_key}']) > float(row['Close']))
                 for h_key in HORIZONS
             }
-            rows.append({'ticker': ticker, 'date': idx, 'features': feat, **labels})
+            rows.append({
+                'ticker': ticker,
+                'date': idx,
+                'features': feats,
+                **labels
+            })
 
     data = pd.DataFrame(rows)
     X = np.stack(data['features'].values)
@@ -59,30 +69,28 @@ def build_dataset(tickers, years=3):
 
 
 def train_and_tune():
-    # 1) build full dataset
     tickers = get_sp500_tickers()
     X, y = build_dataset(tickers)
 
-    # 2) simple 80/20 split
+    # 80/20 split
     split = int(0.8 * len(X))
     X_train, X_test = X[:split], X[split:]
     y_train = {h: y[h][:split] for h in HORIZONS}
     y_test  = {h: y[h][split:] for h in HORIZONS}
 
-    # 3) scale once
+    # standardize
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled  = scaler.transform(X_test)
+    X_train_s = scaler.fit_transform(X_train)
+    X_test_s  = scaler.transform(X_test)
     pickle.dump(scaler, open(os.path.join(MODELS_DIR, 'scaler.pkl'), 'wb'))
 
     thresholds = {}
-    # 4) for each horizon, train, tune, save model + test‐CSVs
     for h_key in HORIZONS:
         clf = RandomForestClassifier(n_estimators=200, random_state=42)
-        clf.fit(X_train_scaled, y_train[h_key])
+        clf.fit(X_train_s, y_train[h_key])
 
-        # tune threshold by F1 on test
-        probs = clf.predict_proba(X_test_scaled)[:, 1]
+        # find best threshold by F1 on test set
+        probs = clf.predict_proba(X_test_s)[:, 1]
         best_thr, best_f1 = 0.5, 0.0
         for thr in np.linspace(0, 1, 101):
             preds = (probs >= thr).astype(int)
@@ -92,24 +100,24 @@ def train_and_tune():
 
         thresholds[h_key] = best_thr
 
-        # save the trained model
-        model_path = os.path.join(MODELS_DIR, f'breakout_model_{h_key}.pkl')
-        pickle.dump(clf, open(model_path, 'wb'))
+        # save model
+        mpath = os.path.join(MODELS_DIR, f'breakout_model_{h_key}.pkl')
+        pickle.dump(clf, open(mpath, 'wb'))
 
-        # export test set for evaluation
+        # export test features & labels
         feat_df = pd.DataFrame(X_test, columns=FEATURE_COLS)
         feat_df.to_csv(os.path.join(MODELS_DIR, f'test_features_{h_key}.csv'), index=False)
 
         label_df = pd.DataFrame({'label': y_test[h_key]})
         label_df.to_csv(os.path.join(MODELS_DIR, f'test_labels_{h_key}.csv'), index=False)
 
-        print(f"  • Horizon {h_key}: best F1={best_f1:.4f} at thr={best_thr:.3f}")
+        print(f"Horizon {h_key}: best F1 = {best_f1:.4f} @ thr = {best_thr:.3f}")
 
-    # 5) save thresholds
+    # write thresholds
     with open(os.path.join(MODELS_DIR, 'thresholds.json'), 'w') as f:
         json.dump(thresholds, f, indent=2)
 
-    print("✅ Training complete. Models, scaler, thresholds, and test CSVs saved.")
+    print("✅ Training complete. Models, scaler, thresholds, and test CSVs are in /models.")
 
 
 if __name__ == "__main__":
