@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 import sys
 import os
+import json
+import pickle
+
 import yfinance as yf
 import pandas as pd
 from tqdm import tqdm
-import pickle
-import json
 
 # — locate this script & your models/ directory —
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -60,16 +61,13 @@ def scan_tickers(tickers):
                 ticker,
                 period='6mo',
                 interval='1d',
-                auto_adjust=False,   # ← raw OHLC, no adj-close munging
+                auto_adjust=False,
                 progress=False
             )
             if df.empty:
                 raise ValueError("No data fetched")
 
-            # keep only OHLC → exactly 4 columns
             df = df[['Open', 'High', 'Low', 'Close']]
-
-            # pull out the scalar closing price
             current = float(df['Close'].iloc[-1])
             feats   = extract_features(df)
 
@@ -79,7 +77,6 @@ def scan_tickers(tickers):
                 'stop_loss':     round(current * 0.95, 2)
             }
 
-            # run each horizon
             for h, model in models.items():
                 prob     = float(model.predict_proba([feats])[0][1])
                 decision = 'BUY' if prob >= thresholds[h] else 'HOLD'
@@ -93,9 +90,15 @@ def scan_tickers(tickers):
         except Exception as e:
             errors.append({'ticker': ticker, 'error': str(e)})
 
-    # only keep your 1-month BUYs
-    buys = [r for r in results if r['decision_1m'] == 'BUY']
-    return buys, errors
+    return results, errors
+
+
+def top_breakouts(results, period_key, top_n=5):
+    dec   = f"decision_{period_key}"
+    score = f"score_{period_key}"
+    buys  = [r for r in results if r.get(dec) == 'BUY']
+    buys.sort(key=lambda x: x.get(score, 0), reverse=True)
+    return buys[:top_n]
 
 
 if __name__ == '__main__':
@@ -105,13 +108,25 @@ if __name__ == '__main__':
         print("⚠️ No tickers provided; defaulting to S&P 500 universe.")
         tickers = get_sp500_tickers()
 
-    buy_list, fetch_errors = scan_tickers(tickers)
+    results, fetch_errors = scan_tickers(tickers)
 
-    print("\n=== BREAKOUT CANDIDATES (1m) ===")
-    for r in buy_list:
-        print(r)
+    # Print top 5 breakouts for each horizon
+    print("\n=== TOP 5 BREAKOUTS ===")
 
+    print("\n📈 1-Week Breakouts:")
+    for r in top_breakouts(results, '1w'):
+        print(f"  • {r['ticker']}: score={r['score_1w']}, target={r['target_1w']}")
+
+    print("\n📈 1-Month Breakouts:")
+    for r in top_breakouts(results, '1m'):
+        print(f"  • {r['ticker']}: score={r['score_1m']}, target={r['target_1m']}")
+
+    print("\n📈 3-Month Breakouts:")
+    for r in top_breakouts(results, '3m'):
+        print(f"  • {r['ticker']}: score={r['score_3m']}, target={r['target_3m']}")
+
+    # Optionally, print any fetch errors
     if fetch_errors:
         print("\n=== ERRORS ===")
         for e in fetch_errors:
-            print(e)
+            print(f"  {e['ticker']}: {e['error']}")
